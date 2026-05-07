@@ -2,10 +2,140 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PatentBase</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
-  <h1>PatentBase</h1>
-  <p>Step 1-E で UI を実装します。</p>
+<div id="app">
+
+  <!-- ===== Header ===== -->
+  <header id="header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+        <polyline points="10 9 9 9 8 9"/>
+      </svg>
+      PatentBase
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-primary" id="btn-new">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      新規登録
+    </button>
+  </header>
+
+  <!-- ===== Body ===== -->
+  <div id="body">
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h2>登録済み特許</h2>
+        <span class="count" id="patent-count">0</span>
+      </div>
+      <div id="patent-list"></div>
+    </aside>
+
+    <!-- Main content -->
+    <main id="main">
+      <!-- Welcome (empty state) -->
+      <div id="welcome">
+        <div class="icon">🔍</div>
+        <h2>PatentBase へようこそ</h2>
+        <p>特許番号・PDF・Word ファイルから特許を登録し、Claude AI による要約・権利化ポイント・請求項構造の分析ができます。</p>
+        <button class="btn btn-primary" onclick="openModal()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          最初の特許を登録する
+        </button>
+      </div>
+      <!-- Detail view (hidden until selected) -->
+      <div id="detail" style="display:none"></div>
+    </main>
+
+  </div><!-- /#body -->
+
+</div><!-- /#app -->
+
+<!-- ===== Registration Modal ===== -->
+<div class="modal-overlay hidden" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>特許を登録</h2>
+      <button class="btn btn-icon btn-secondary" id="btn-close-modal" title="閉じる">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-number-btn">🔢 特許番号</button>
+        <button class="tab-btn" id="tab-pdf-btn">📄 PDF</button>
+        <button class="tab-btn" id="tab-word-btn">📝 Word</button>
+      </div>
+
+      <!-- Tab: 特許番号 -->
+      <div class="tab-pane active" id="tab-number-pane">
+        <div class="form-group">
+          <label for="register-number-input">特許番号</label>
+          <input class="form-control" id="register-number-input" type="text"
+            placeholder="例: 特開2020-123456 / JP2020123456A / 2020-123456">
+          <small>J-PlatPat から書誌情報・要約・請求項・明細書を自動取得します。</small>
+        </div>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;color:#64748b">
+          <strong>対応フォーマット</strong>
+          <ul style="margin-top:6px;padding-left:16px;line-height:1.8">
+            <li>特開 2020-123456</li>
+            <li>JP2020123456A</li>
+            <li>2020-123456</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Tab: PDF -->
+      <div class="tab-pane" id="tab-pdf-pane">
+        <div class="form-group">
+          <label>PDF ファイル</label>
+          <label class="upload-area" for="pdf-file-input" id="pdf-upload-area">
+            <div class="icon">📄</div>
+            <p><strong>クリックして選択</strong>またはドラッグ＆ドロップ</p>
+            <p style="font-size:12px;margin-top:4px">.pdf ファイル</p>
+            <div class="filename" id="pdf-filename"></div>
+          </label>
+          <input type="file" id="pdf-file-input" accept=".pdf">
+          <small>J-PlatPat からダウンロードした公開特許公報 PDF に対応しています。</small>
+        </div>
+      </div>
+
+      <!-- Tab: Word -->
+      <div class="tab-pane" id="tab-word-pane">
+        <div class="form-group">
+          <label>Word ファイル</label>
+          <label class="upload-area" for="word-file-input" id="word-upload-area">
+            <div class="icon">📝</div>
+            <p><strong>クリックして選択</strong>またはドラッグ＆ドロップ</p>
+            <p style="font-size:12px;margin-top:4px">.docx ファイル</p>
+            <div class="filename" id="word-filename"></div>
+          </label>
+          <input type="file" id="word-file-input" accept=".docx,.doc">
+          <small>特許事務所から受け取った明細書 Word ファイルに対応しています。</small>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btn-cancel">キャンセル</button>
+      <button class="btn btn-primary" id="btn-register">登録</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="/static/app.js"></script>
 </body>
 </html>

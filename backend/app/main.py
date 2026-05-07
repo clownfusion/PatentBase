@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -24,8 +24,7 @@ def on_startup():
 
 
 @app.get("/")
-def index(request):
-    from fastapi import Request
+def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 

@@ -128,11 +128,14 @@ def _create_patent_record(db: Session, source: str, claims_text: str = "",
 
 
 def _patent_to_dict(p: Patent) -> dict:
+    import json as _json
     return {
         "id": p.id,
         "patent_number": p.patent_number,
         "source": p.source,
         "title": p.title,
+        "applicant": p.applicant,
+        "ipc_codes": p.ipc_codes,
         "abstract": p.abstract,
         "summary": p.summary,
         "key_points": p.key_points,
@@ -140,5 +143,6 @@ def _patent_to_dict(p: Patent) -> dict:
         "mermaid_diagram": p.mermaid_diagram,
         "drawio_xml": p.drawio_xml,
         "analysis_status": p.analysis_status,
+        "metadata": p.figures_metadata,
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
