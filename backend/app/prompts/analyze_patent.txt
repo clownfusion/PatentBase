@@ -1,0 +1,36 @@
+以下の特許文書（テキスト、および添付図面がある場合はその画像）を分析してください。
+
+必ず以下の JSON 形式で回答してください。JSON ブロック以外の説明文は不要です。
+
+```json
+{
+  "summary": "発明の概要を3〜5文で記述",
+  "key_points": [
+    "権利化・特徴のポイント1",
+    "権利化・特徴のポイント2"
+  ],
+  "claims_structured": [
+    {
+      "claim_number": 1,
+      "claim_type": "independent",
+      "text": "請求項1のテキスト",
+      "components": [
+        {"id": "A", "description": "構成要素Aの説明"},
+        {"id": "B", "description": "構成要素Bの説明"}
+      ],
+      "depends_on": null
+    },
+    {
+      "claim_number": 2,
+      "claim_type": "dependent",
+      "text": "請求項2のテキスト",
+      "components": [],
+      "depends_on": 1
+    }
+  ],
+  "mermaid_diagram": "flowchart TD\n  A[構成A] --> B[構成B]\n  B --> C[構成C]",
+  "drawio_xml": "<mxGraphModel>...</mxGraphModel>"
+}
+```
+
+【特許文書】
