@@ -1,36 +1,87 @@
-以下の特許文書（テキスト、および添付図面がある場合はその画像）を分析してください。
+以下の特許文書（書誌情報・要約・請求項・詳細説明、および添付図面がある場合はその画像）を分析してください。
 
-必ず以下の JSON 形式で回答してください。JSON ブロック以外の説明文は不要です。
+# 分析指示
+
+以下の観点で特許を分析し、必ず指定の JSON 形式のみで回答してください。JSON ブロック以外の説明文・前置きは不要です。
+
+## 各フィールドの記載方法
+
+### summary
+発明の概要を3〜5文で記述してください。
+- 何を解決したか（課題）
+- どのような手段で解決したか（手段の核心）
+- どのような効果が得られるか
+を含めること。
+
+### key_points
+権利化の観点・技術的特徴のポイントを3〜7個のリストで記述してください。
+- 独立請求項1の本質的な特徴
+- 先行技術との差異
+- 主な効果・優位性
+- 注意すべき権利範囲の広さ・狭さ
+などを含めること。
+
+### claims_structured
+請求項を構造化してください。
+- claim_type: 独立請求項は "independent"、従属請求項は "dependent"
+- components: 請求項を構成する主要要素（各要素に短いID "A","B","C"... を付与）
+- depends_on: 従属先の請求項番号（独立項は null）
+- summary: その請求項が保護する技術的特徴の1文要約
+
+### mermaid_diagram
+請求項の構成要素と依存関係を Mermaid の flowchart TD 形式で表現してください。
+- 主要な構成要素をノードとして表現
+- 構成要素間の関係（「を有する」「を備える」「に取り付けられた」等）を矢印で表現
+- 請求項間の従属関係も表現（点線等で区別可）
+- ノードラベルは日本語で、簡潔に（10〜15文字以内）
+- 5〜15ノード程度を目安とする
+
+### drawio_xml
+同様の構造を Draw.io XML 形式で表現してください。
+- `<mxGraphModel>` タグから始まる完全な XML
+- ノードは `mxCell` の vertex、エッジは edge で表現
+- ノードには id="v1","v2"... を付与
+- 横幅 800px × 適切な高さで配置
+- 日本語ラベルを使用
+
+---
+
+必ず以下の JSON 形式のみで回答してください（JSON ブロック以外の出力は禁止）:
 
 ```json
 {
-  "summary": "発明の概要を3〜5文で記述",
+  "summary": "発明の概要3〜5文",
   "key_points": [
-    "権利化・特徴のポイント1",
-    "権利化・特徴のポイント2"
+    "ポイント1",
+    "ポイント2",
+    "ポイント3"
   ],
   "claims_structured": [
     {
       "claim_number": 1,
       "claim_type": "independent",
-      "text": "請求項1のテキスト",
+      "text": "請求項1の全文",
+      "summary": "請求項1の技術的特徴1文",
       "components": [
-        {"id": "A", "description": "構成要素Aの説明"},
-        {"id": "B", "description": "構成要素Bの説明"}
+        {"id": "A", "description": "構成要素Aの説明（15文字以内）"},
+        {"id": "B", "description": "構成要素Bの説明（15文字以内）"}
       ],
       "depends_on": null
     },
     {
       "claim_number": 2,
       "claim_type": "dependent",
-      "text": "請求項2のテキスト",
+      "text": "請求項2の全文",
+      "summary": "請求項2の限定内容1文",
       "components": [],
       "depends_on": 1
     }
   ],
   "mermaid_diagram": "flowchart TD\n  A[構成A] --> B[構成B]\n  B --> C[構成C]",
-  "drawio_xml": "<mxGraphModel>...</mxGraphModel>"
+  "drawio_xml": "<mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"v1\" value=\"構成A\" style=\"rounded=1;\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"100\" y=\"100\" width=\"120\" height=\"40\" as=\"geometry\"/></mxCell></root></mxGraphModel>"
 }
 ```
+
+---
 
 【特許文書】

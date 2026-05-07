@@ -1,3 +1,4 @@
+"""Claude API を使った AI プロバイダー実装。"""
 import anthropic
 import base64
 from .ai_provider import AIProvider, AnalysisInput, AnalysisOutput
@@ -23,13 +24,20 @@ class ClaudeProvider(AIProvider):
         return self._client
 
     async def complete(self, prompt: str, input: AnalysisInput) -> AnalysisOutput:
-        client = self._get_client()
+        """Claude API を呼び出して分析結果を返す。
 
+        メッセージ構造:
+        - system: エキスパートペルソナ
+        - user content[0..n]: 図面画像 (マルチモーダル、任意)
+        - user content[-2]: 指示プロンプト (prompt テンプレート) ← キャッシュ対象
+        - user content[-1]: 特許本文 (input.text) ← キャッシュ対象 (長文)
+        """
+        client = self._get_client()
         content: list = []
 
-        # 図面画像（マルチモーダル）
+        # 図面画像（マルチモーダル、オプション）
         if input.images:
-            for img_bytes in input.images:
+            for img_bytes in input.images[:10]:  # 最大10枚
                 content.append({
                     "type": "image",
                     "source": {
@@ -39,20 +47,32 @@ class ClaudeProvider(AIProvider):
                     },
                 })
 
-        # テキスト（プロンプトキャッシュ対象）
+        # 指示プロンプト（静的部分 → キャッシュ対象）
+        if prompt:
+            content.append({
+                "type": "text",
+                "text": prompt,
+                "cache_control": {"type": "ephemeral"},
+            })
+
+        # 特許本文（動的部分、長文 → キャッシュ対象）
         content.append({
             "type": "text",
             "text": input.text,
-            "cache_control": {"type": "ephemeral"},  # プロンプトキャッシュ
+            "cache_control": {"type": "ephemeral"},
         })
 
-        messages = [{"role": "user", "content": content}]
+        system_prompt = (
+            input.system_prompt
+            or "あなたは特許の専門家（弁理士レベルの知識を持つ分析者）です。"
+               "正確で実務的な日本語で回答してください。"
+        )
 
         response = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=8096,
-            system=input.system_prompt or "あなたは特許の専門家です。",
-            messages=messages,
+            system=system_prompt,
+            messages=[{"role": "user", "content": content}],
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
