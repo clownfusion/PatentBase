@@ -49,7 +49,9 @@ class PatentBiblio:
     app_number: str = ""         # 出願番号
     publication_type: str = ""   # 公報種別 (例: 公開特許公報(A))
     registration_number: str = ""# 特許番号 (例: 特許第7807828号)
-    status: str = ""             # ステータス
+    status: str = ""             # ステータス（例: 特許 有効）
+    progress_info: str = ""      # 経過情報（経過記録タブのテキスト）
+    jplatpat_url: str = ""       # J-PlatPat 永続リンク URL
     # 内部識別子（API 呼び出し時に使用）
     isn: str = ""
     hash_value: str = ""
@@ -357,6 +359,83 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
 
         logger.debug(f"ISN={isn}, DOCU_KEY={docu_key}, JPA_KEY={docu_key_jpa}")
 
+        # ---- ステップ4.5: ステータス取得（検索結果ページ）----
+        status = ""
+        try:
+            status_labels = page.locator("p[id*='_status0'] label")
+            cnt = status_labels.count()
+            if cnt > 0:
+                parts = [status_labels.nth(i).inner_text().strip() for i in range(cnt)]
+                status = " / ".join(p for p in parts if p)
+            logger.debug(f"ステータス: {status}")
+        except Exception as e:
+            logger.warning(f"ステータス取得エラー: {e}")
+
+        # ---- ステップ4.6: J-PlatPat URL 取得 ----
+        # URL ボタンは新ページではなく Angular Material ダイアログを開くため、
+        # context.expect_page() は使わず、ダイアログ内テキストから URL を抽出する
+        jplatpat_url = ""
+        try:
+            url_btn = page.locator("a[id*='_url0']")
+            if url_btn.count() > 0:
+                url_btn.first.click()
+                page.wait_for_timeout(1500)
+                overlay = page.locator(".cdk-overlay-container")
+                if overlay.count() > 0:
+                    text = overlay.first.inner_text()
+                    m = re.search(r'https?://[^\s"\'<>　、）]+', text)
+                    if m:
+                        jplatpat_url = m.group(0).rstrip("。、）」』")
+                # ダイアログを Escape で閉じる
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(800)
+            logger.debug(f"J-PlatPat URL: {jplatpat_url}")
+        except Exception as e:
+            logger.warning(f"J-PlatPat URL 取得エラー: {e}")
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+        # ---- ステップ4.7: 経過情報取得 ----
+        progress_info = ""
+        try:
+            prog_link = page.locator("a[id*='_progReferenceInfo0']")
+            if prog_link.count() > 0:
+                with context.expect_page(timeout=10000) as prog_page_info:
+                    prog_link.first.click()
+                prog_page = prog_page_info.value
+                try:
+                    prog_page.wait_for_load_state("networkidle", timeout=25000)
+                    prog_page.wait_for_timeout(2000)
+                    keika_tab = prog_page.locator(
+                        "a:has-text('経過記録'), li:has-text('経過記録') a, [role='tab']:has-text('経過記録')"
+                    )
+                    if keika_tab.count() > 0:
+                        keika_tab.first.click()
+                        prog_page.wait_for_timeout(2000)
+                    body_text = prog_page.inner_text("body")
+                    progress_info = body_text[:8000] if body_text else ""
+                finally:
+                    prog_page.close()
+            logger.debug(f"経過情報: {len(progress_info)}文字")
+        except Exception as e:
+            logger.warning(f"経過情報取得エラー: {e}")
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+        # 残存オーバーレイをクリア（後続クリックのブロック防止）
+        try:
+            if page.locator(".cdk-overlay-backdrop").count() > 0:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(800)
+        except Exception:
+            pass
+
         # ---- ステップ5: 文献表示ページへ移動 ----
         # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
         # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
@@ -461,6 +540,9 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
             app_number=biblio_fields.get("app_number", ""),
             publication_type=biblio_fields.get("publication_type", ""),
             registration_number=biblio_fields.get("registration_number", ""),
+            status=status,
+            progress_info=progress_info,
+            jplatpat_url=jplatpat_url,
             isn=isn,
             hash_value=hash_value,
             docu_key_jpa=docu_key_jpa,

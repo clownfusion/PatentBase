@@ -327,7 +327,12 @@ function renderBiblio(patent) {
   const applicantLabel = (isRegistered && m.patentee) ? "特許権者" : "出願人";
   const applicantValue = (isRegistered && m.patentee) ? m.patentee : (patent.applicant || m.applicant || "");
 
-  const row = (label, value) => value
+  // ①～⑥: always show, "-" when empty
+  const row = (label, value) =>
+    `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${value ? escHtml(value) : "-"}</span></div>`;
+
+  // optional row: hide when empty
+  const optRow = (label, value) => value
     ? `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${escHtml(value)}</span></div>`
     : "";
 
@@ -349,11 +354,31 @@ function renderBiblio(patent) {
     ],
   ];
 
-  return groups
+  const mainHtml = groups
     .map(g => g.join(""))
     .filter(Boolean)
     .map(content => `<div class="biblio-group">${content}</div>`)
     .join("");
+
+  // ⑦⑧⑨: additional fields
+  const statusHtml = optRow("ステータス", m.status);
+
+  const urlHtml = m.jplatpat_url
+    ? `<div class="biblio-entry"><span class="biblio-key">【J-PlatPat】</span><span class="biblio-val"><a href="${escHtml(m.jplatpat_url)}" target="_blank" rel="noopener noreferrer">${escHtml(m.jplatpat_url)}</a></span></div>`
+    : "";
+
+  const progressHtml = m.progress_info
+    ? `<div class="biblio-entry biblio-entry--block">
+        <span class="biblio-key">【経過情報】</span>
+        <details>
+          <summary>表示する</summary>
+          <pre class="progress-text">${escHtml(m.progress_info)}</pre>
+        </details>
+       </div>`
+    : "";
+
+  const extraHtml = [statusHtml, urlHtml, progressHtml].filter(Boolean).join("");
+  return mainHtml + (extraHtml ? `<div class="biblio-group">${extraHtml}</div>` : "");
 }
 
 // ─── Mermaid rendering ────────────────────────────────────────────────────

@@ -57,6 +57,9 @@ async def register_from_number(
             "patentee": b.patentee,
             "applicant": b.applicant,
             "inventor": b.inventor,
+            "status": b.status,
+            "progress_info": b.progress_info,
+            "jplatpat_url": b.jplatpat_url,
         },
     )
     return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}

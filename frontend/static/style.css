@@ -176,6 +176,11 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
 .biblio-entry { display: flex; gap: 6px; font-size: 13px; line-height: 1.6; padding: 1px 0; }
 .biblio-key { color: var(--c-text-muted); white-space: nowrap; flex-shrink: 0; }
 .biblio-val { color: var(--c-text); }
+.biblio-val a { color: var(--c-primary); word-break: break-all; }
+.biblio-entry--block { flex-direction: column; gap: 2px; }
+.biblio-entry--block details { margin-top: 4px; }
+.biblio-entry--block summary { cursor: pointer; font-size: 12px; color: var(--c-primary); }
+.progress-text { font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 4px; padding: 8px; margin-top: 6px; }
 
 /* Analysis section */
 #analysis-section { margin-bottom: 16px; }
