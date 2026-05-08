@@ -126,6 +126,30 @@ captured_docu_key: list[str] = []
 detail_page.on("request", _capture_docu_key)  # /wsp1201 の POST body から DOCU_KEY を取得
 ```
 
+### J-PlatPat: 経過情報テーブルの抽出
+
+経過情報ページ（`_progReferenceInfo0` リンクから開く新タブ）には複数のテーブルが存在する。  
+ページ上部のステータス行（「登録XXXXXXX 本権利は抹消されていない」）も別テーブルに入っているため、  
+**最初のテーブルではなく、ページ内で最も行数が多いテーブルを選択する**。
+
+また、デフォルト表示が「カテゴリ別表示」のため、抽出前に **「時系列表示」ラジオボタンをクリック**してから取得する。
+
+```python
+# _extract_progress_table() の方針
+# 1. label:has-text('時系列表示') をクリック
+# 2. page.locator("table").all() で全テーブルを取得
+# 3. 行数が最多のテーブルを選択（best_row_count < 3 はフォールバック）
+# 4. {"headers": [...], "rows": [[...], ...]} の JSON 文字列として返す
+# 5. テーブル未発見・行ゼロ時は body_text[:8000] にフォールバック
+```
+
+`progress_info` フィールドのデータ形式:
+- **新規取得（成功）**: `{"headers": [...], "rows": [[...], ...]}` の JSON 文字列
+- **テーブル未発見 / 旧データ**: プレーンテキスト（最大 8000 文字）
+
+フロントエンド（`app.js` の `renderBiblio`）は `JSON.parse` を try/catch し、  
+失敗時は `<pre class="progress-text">` にフォールバックする（後方互換）。
+
 ### J-PlatPat: Angular Material ダイアログとオーバーレイ
 
 J-PlatPat の検索結果行にある **URL ボタン** (`a[id*='_url0']`) は新タブを開かず、  
@@ -143,6 +167,27 @@ page.wait_for_timeout(1500)
 # ダイアログ内テキストから URL を正規表現で抽出
 page.keyboard.press("Escape")   # 必須: 閉じないと後続クリックが全てブロックされる
 page.wait_for_timeout(800)
+```
+
+---
+
+## FastAPI ルーティング注意点
+
+### 静的パスは動的パスより前に定義する
+
+`/{patent_id}` のような動的パスは、同名の静的パスをすべて吸収してしまう。  
+例: `DELETE /patents/bulk` を `DELETE /patents/{patent_id}` より後に定義すると、  
+`patent_id="bulk"` として処理され 404 になる。
+
+**必ず静的パス（`/bulk` 等）を動的パス（`/{patent_id}`）より前に定義すること。**
+
+```python
+# ✅ 正しい順序
+@router.delete("/bulk")         # 静的パスを先に
+def delete_patents_bulk(...): ...
+
+@router.delete("/{patent_id}")  # 動的パスを後に
+def delete_patent(...): ...
 ```
 
 ---
