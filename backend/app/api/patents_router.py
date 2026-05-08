@@ -1,7 +1,8 @@
-"""特許の登録・取得エンドポイント。"""
+"""特許の登録・取得・削除エンドポイント。"""
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.models.patent import Patent
@@ -155,6 +156,25 @@ def list_patents(db: Session = Depends(get_db)):
     """登録済み特許の一覧を返す。"""
     patents = db.query(Patent).order_by(Patent.created_at.desc()).all()
     return [_patent_to_dict(p) for p in patents]
+
+
+@router.delete("/bulk")
+def delete_patents_bulk(ids: List[str] = Body(...), db: Session = Depends(get_db)):
+    """指定した複数の特許をまとめて削除する。"""
+    db.query(Patent).filter(Patent.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted": len(ids)}
+
+
+@router.delete("/{patent_id}")
+def delete_patent(patent_id: str, db: Session = Depends(get_db)):
+    """特許を1件削除する。"""
+    patent = db.query(Patent).filter(Patent.id == patent_id).first()
+    if not patent:
+        raise HTTPException(status_code=404, detail="Patent not found")
+    db.delete(patent)
+    db.commit()
+    return {"ok": True}
 
 
 def _create_patent_record(db: Session, source: str, claims_text: str = "",

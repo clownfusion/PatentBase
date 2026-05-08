@@ -107,6 +107,82 @@ def normalize_patent_number(patent_number: str) -> str:
     return s
 
 
+# ========== 経過情報テーブル抽出 ==========
+
+def _extract_progress_table(prog_page) -> str:
+    """経過記録ページからテーブルを抽出して JSON 文字列に変換する。
+
+    成功時: {"headers": [...], "rows": [[...], ...]} の JSON 文字列
+    失敗時: body テキスト（最大8000文字）にフォールバック
+    """
+    # 時系列表示ラジオボタンに切り替える
+    try:
+        jikei = prog_page.locator("label:has-text('時系列表示'), input[type='radio'] + *:has-text('時系列表示')")
+        if jikei.count() > 0:
+            jikei.first.click()
+            prog_page.wait_for_timeout(1500)
+            logger.debug("時系列表示に切り替え完了")
+    except Exception as e:
+        logger.debug(f"時系列表示切り替えスキップ: {e}")
+
+    # ページ内の全テーブルから最も行数が多いもの（本体テーブル）を選ぶ
+    try:
+        all_tables = prog_page.locator("table").all()
+        best_table = None
+        best_row_count = 0
+        for tbl in all_tables:
+            row_count = tbl.locator("tr").count()
+            if row_count > best_row_count:
+                best_row_count = row_count
+                best_table = tbl
+        logger.debug(f"テーブル候補数: {len(all_tables)}, 最大行数: {best_row_count}")
+    except Exception as e:
+        logger.warning(f"テーブル探索エラー → フォールバック: {e}")
+        body_text = prog_page.inner_text("body")
+        return body_text[:8000] if body_text else ""
+
+    # 行数が少なすぎる場合はフォールバック（ステータス行だけのテーブル等）
+    if best_table is None or best_row_count < 3:
+        logger.debug("有効なテーブル未発見 → body テキストにフォールバック")
+        body_text = prog_page.inner_text("body")
+        return body_text[:8000] if body_text else ""
+
+    try:
+        headers = []
+        th_cells = best_table.locator("thead tr th, tr:first-child th")
+        if th_cells.count() > 0:
+            headers = [th_cells.nth(i).inner_text().strip() for i in range(th_cells.count())]
+        else:
+            first_row_cells = best_table.locator("tr:first-child td")
+            headers = [first_row_cells.nth(i).inner_text().strip() for i in range(first_row_cells.count())]
+
+        rows = []
+        data_rows = (
+            best_table.locator("tbody tr")
+            if best_table.locator("tbody tr").count() > 0
+            else best_table.locator("tr:not(:first-child)")
+        )
+        for i in range(data_rows.count()):
+            cells = data_rows.nth(i).locator("td")
+            row = [cells.nth(j).inner_text().strip() for j in range(cells.count())]
+            if any(row):
+                rows.append(row)
+
+        if not rows:
+            logger.debug("経過テーブルの行が空 → body テキストにフォールバック")
+            body_text = prog_page.inner_text("body")
+            return body_text[:8000] if body_text else ""
+
+        json_str = json.dumps({"headers": headers, "rows": rows}, ensure_ascii=False)
+        logger.debug(f"経過テーブル: {len(headers)}列 × {len(rows)}行")
+        return json_str
+
+    except Exception as e:
+        logger.warning(f"経過テーブル解析エラー → フォールバック: {e}")
+        body_text = prog_page.inner_text("body")
+        return body_text[:8000] if body_text else ""
+
+
 # ========== HTML → テキスト変換 ==========
 
 def html_to_text(html: str) -> str:
@@ -415,8 +491,7 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
                     if keika_tab.count() > 0:
                         keika_tab.first.click()
                         prog_page.wait_for_timeout(2000)
-                    body_text = prog_page.inner_text("body")
-                    progress_info = body_text[:8000] if body_text else ""
+                    progress_info = _extract_progress_table(prog_page)
                 finally:
                     prog_page.close()
             logger.debug(f"経過情報: {len(progress_info)}文字")

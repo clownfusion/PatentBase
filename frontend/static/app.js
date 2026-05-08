@@ -6,6 +6,8 @@ const state = {
   patents: [],
   selectedId: null,
   pollingTimer: null,
+  selectMode: false,
+  selectedIds: new Set(),
 };
 
 // ─── API helpers ──────────────────────────────────────────────────────────
@@ -51,8 +53,25 @@ async function loadPatents() {
 function renderSidebar() {
   const list = document.getElementById("patent-list");
   const count = document.getElementById("patent-count");
+  const controls = document.getElementById("sidebar-delete-controls");
   if (!list || !count) return;
   count.textContent = state.patents.length;
+
+  // 削除コントロールの描画
+  if (controls) {
+    if (state.patents.length === 0) {
+      controls.innerHTML = "";
+    } else if (state.selectMode) {
+      const n = state.selectedIds.size;
+      controls.innerHTML = `
+        <button class="sb-btn sb-btn-danger" onclick="deleteSelected()" ${n === 0 ? "disabled" : ""}>削除（${n}件）</button>
+        <button class="sb-btn sb-btn-cancel" onclick="exitSelectMode()">キャンセル</button>`;
+    } else {
+      controls.innerHTML = `
+        <button class="sb-btn sb-btn-select" onclick="enterSelectMode()">選択</button>
+        <button class="sb-btn sb-btn-danger" onclick="deleteAll()">全件削除</button>`;
+    }
+  }
 
   if (state.patents.length === 0) {
     list.innerHTML = `<div class="empty-list">
@@ -63,20 +82,119 @@ function renderSidebar() {
     return;
   }
 
-  list.innerHTML = state.patents.map(p => `
-    <div class="patent-item ${p.id === state.selectedId ? 'active' : ''}" data-id="${p.id}">
-      <div class="number">${p.patent_number || '番号未設定'}</div>
-      <div class="title">${p.title || '（タイトルなし）'}</div>
-      <div class="meta">
-        ${statusBadge(p.analysis_status)}
-        ${sourceBadge(p.source)}
-      </div>
-    </div>
-  `).join("");
+  list.innerHTML = state.patents.map(p => {
+    const isActive = p.id === state.selectedId;
+    const isChecked = state.selectedIds.has(p.id);
+    return `
+      <div class="patent-item ${isActive ? "active" : ""} ${state.selectMode ? "select-mode" : ""}" data-id="${p.id}">
+        ${state.selectMode
+          ? `<input type="checkbox" class="patent-checkbox" data-id="${p.id}" ${isChecked ? "checked" : ""}>`
+          : ""}
+        <div class="patent-item-body">
+          <div class="number">${escHtml(p.patent_number || "番号未設定")}</div>
+          <div class="title">${escHtml(p.title || "（タイトルなし）")}</div>
+          <div class="meta">
+            ${statusBadge(p.analysis_status)}
+            ${sourceBadge(p.source)}
+          </div>
+        </div>
+        ${!state.selectMode
+          ? `<button class="patent-delete-btn" data-id="${p.id}" title="削除">✕</button>`
+          : ""}
+      </div>`;
+  }).join("");
 
   list.querySelectorAll(".patent-item").forEach(el => {
-    el.addEventListener("click", () => selectPatent(el.dataset.id));
+    el.addEventListener("click", e => {
+      if (e.target.closest(".patent-delete-btn") || e.target.closest(".patent-checkbox")) return;
+      if (state.selectMode) {
+        toggleSelectId(el.dataset.id);
+      } else {
+        selectPatent(el.dataset.id);
+      }
+    });
   });
+  list.querySelectorAll(".patent-delete-btn").forEach(btn => {
+    btn.addEventListener("click", e => { e.stopPropagation(); deleteSingle(btn.dataset.id); });
+  });
+  list.querySelectorAll(".patent-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => toggleSelectId(cb.dataset.id));
+  });
+}
+
+// ─── 削除操作 ─────────────────────────────────────────────────────────────
+
+function enterSelectMode() {
+  state.selectMode = true;
+  state.selectedIds = new Set();
+  renderSidebar();
+}
+
+function exitSelectMode() {
+  state.selectMode = false;
+  state.selectedIds = new Set();
+  renderSidebar();
+}
+
+function toggleSelectId(id) {
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+  else state.selectedIds.add(id);
+  renderSidebar();
+}
+
+function _clearDetailIfDeleted(deletedIds) {
+  if (deletedIds.includes(state.selectedId)) {
+    state.selectedId = null;
+    document.getElementById("detail").style.display = "none";
+    document.getElementById("welcome").style.display = "flex";
+  }
+}
+
+async function deleteSingle(id) {
+  const patent = state.patents.find(p => p.id === id);
+  const label = patent ? (patent.patent_number || patent.title || "この特許") : "この特許";
+  if (!confirm(`「${label}」を削除しますか？`)) return;
+  try {
+    await api("DELETE", `/patents/${id}`);
+    state.patents = state.patents.filter(p => p.id !== id);
+    _clearDetailIfDeleted([id]);
+    renderSidebar();
+    toast("削除しました", "success");
+  } catch (e) {
+    toast("削除に失敗しました: " + e.message, "error");
+  }
+}
+
+async function deleteSelected() {
+  const ids = [...state.selectedIds];
+  if (ids.length === 0) return;
+  if (!confirm(`選択した ${ids.length} 件を削除しますか？`)) return;
+  try {
+    await api("DELETE", "/patents/bulk", ids);
+    state.patents = state.patents.filter(p => !state.selectedIds.has(p.id));
+    _clearDetailIfDeleted(ids);
+    exitSelectMode();
+    toast(`${ids.length} 件を削除しました`, "success");
+  } catch (e) {
+    toast("削除に失敗しました: " + e.message, "error");
+  }
+}
+
+async function deleteAll() {
+  if (state.patents.length === 0) return;
+  if (!confirm(`全 ${state.patents.length} 件を削除しますか？この操作は取り消せません。`)) return;
+  const ids = state.patents.map(p => p.id);
+  try {
+    await api("DELETE", "/patents/bulk", ids);
+    state.patents = [];
+    state.selectedId = null;
+    document.getElementById("detail").style.display = "none";
+    document.getElementById("welcome").style.display = "flex";
+    renderSidebar();
+    toast("全件削除しました", "success");
+  } catch (e) {
+    toast("削除に失敗しました: " + e.message, "error");
+  }
 }
 
 function statusBadge(status) {
@@ -162,7 +280,7 @@ function renderDetail(patent) {
 
     <!-- 書誌情報 -->
     <div class="card">
-      <div class="card-header"><h3>書誌情報</h3></div>
+      <div class="card-header"><h3>書誌情報${(patent.metadata || {}).publication_type ? '：' + escHtml((patent.metadata || {}).publication_type) : ''}</h3></div>
       <div class="card-body">
         ${renderBiblio(patent)}
         ${patent.abstract ? `
@@ -327,58 +445,75 @@ function renderBiblio(patent) {
   const applicantLabel = (isRegistered && m.patentee) ? "特許権者" : "出願人";
   const applicantValue = (isRegistered && m.patentee) ? m.patentee : (patent.applicant || m.applicant || "");
 
-  // ①～⑥: always show, "-" when empty
-  const row = (label, value) =>
-    `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${value ? escHtml(value) : "-"}</span></div>`;
-
-  // optional row: hide when empty
-  const optRow = (label, value) => value
-    ? `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${escHtml(value)}</span></div>`
-    : "";
-
-  const groups = [
-    [
-      row("公報種別", m.publication_type),
-      row("発明の名称", patent.title),
-      row(applicantLabel, applicantValue),
-    ],
-    [
-      row("出願番号", m.app_number),
-      row("公開番号", m.publication_number || (!isRegistered ? patent.patent_number : "")),
-      isRegistered ? row("特許番号", m.registration_number) : "",
-    ],
-    [
-      row("出願日", patent.filing_date || m.filing_date),
-      row("公開日", patent.publication_date || m.publication_date),
-      isRegistered ? row("登録日", m.registration_date) : "",
-    ],
-  ];
-
-  const mainHtml = groups
-    .map(g => g.join(""))
-    .filter(Boolean)
-    .map(content => `<div class="biblio-group">${content}</div>`)
-    .join("");
-
-  // ⑦⑧⑨: additional fields
-  const statusHtml = optRow("ステータス", m.status);
-
+  // J-PlatPat リンク
   const urlHtml = m.jplatpat_url
     ? `<div class="biblio-entry"><span class="biblio-key">【J-PlatPat】</span><span class="biblio-val"><a href="${escHtml(m.jplatpat_url)}" target="_blank" rel="noopener noreferrer">${escHtml(m.jplatpat_url)}</a></span></div>`
     : "";
 
-  const progressHtml = m.progress_info
-    ? `<div class="biblio-entry biblio-entry--block">
-        <span class="biblio-key">【経過情報】</span>
-        <details>
-          <summary>表示する</summary>
-          <pre class="progress-text">${escHtml(m.progress_info)}</pre>
-        </details>
-       </div>`
-    : "";
+  // 発明の名称・特許権者
+  const titleHtml = `<div class="biblio-entry"><span class="biblio-key">【発明の名称】</span><span class="biblio-val">${patent.title ? escHtml(patent.title) : "-"}</span></div>`;
+  const applicantHtml = `<div class="biblio-entry"><span class="biblio-key">【${applicantLabel}】</span><span class="biblio-val">${applicantValue ? escHtml(applicantValue) : "-"}</span></div>`;
 
-  const extraHtml = [statusHtml, urlHtml, progressHtml].filter(Boolean).join("");
-  return mainHtml + (extraHtml ? `<div class="biblio-group">${extraHtml}</div>` : "");
+  // 番号と日付テーブル
+  const pubNumber = m.publication_number || (!isRegistered ? patent.patent_number : "");
+  const numDateRows = [
+    ["出願", m.app_number, patent.filing_date || m.filing_date],
+    ["公開", pubNumber, patent.publication_date || m.publication_date],
+    ...(isRegistered ? [["登録", m.registration_number, m.registration_date]] : []),
+  ];
+  const numDateTable = `<div class="biblio-entry biblio-numdate" style="align-items:flex-start">
+    <span class="biblio-key">【番号・日付】</span>
+    <table class="numdate-table">
+      <thead><tr><th></th><th>番号</th><th>日付</th></tr></thead>
+      <tbody>${numDateRows.map(([label, num, date]) =>
+        `<tr><th>${label}</th><td>${num ? escHtml(num) : "—"}</td><td>${date ? escHtml(date) : "—"}</td></tr>`
+      ).join("")}</tbody>
+    </table>
+  </div>`;
+
+  // 経過情報（ラベルと値を分離して他の行と位置を揃える）
+  const progressHtml = (() => {
+    const statusVal = m.status ? `<span class="biblio-val">${escHtml(m.status)}</span>` : "";
+    if (!m.progress_info) {
+      return m.status
+        ? `<div class="biblio-entry"><span class="biblio-key">【経過情報】</span>${statusVal}</div>`
+        : "";
+    }
+    let innerContent;
+    try {
+      const parsed = JSON.parse(m.progress_info);
+      if (parsed && Array.isArray(parsed.rows) && parsed.rows.length > 0) {
+        const HEADERS = ["日付", "", "内容", "カテゴリ"];
+        const headerRow = `<tr>${HEADERS.map(h => `<th>${h}</th>`).join("")}</tr>`;
+        const dataRows = parsed.rows
+          .map(row => {
+            const rev = [...row].reverse();
+            return `<tr>${rev.map(cell => `<td>${escHtml(cell)}</td>`).join("")}</tr>`;
+          })
+          .join("");
+        innerContent = `<table class="progress-table"><thead>${headerRow}</thead><tbody>${dataRows}</tbody></table>`;
+      } else {
+        innerContent = `<pre class="progress-text">${escHtml(m.progress_info)}</pre>`;
+      }
+    } catch (_) {
+      innerContent = `<pre class="progress-text">${escHtml(m.progress_info)}</pre>`;
+    }
+    return `<div class="biblio-entry" style="align-items:flex-start">
+      <span class="biblio-key">【経過情報】</span>
+      <div>${statusVal}<details style="margin-top:4px">
+        <summary>詳細情報表示</summary>
+        ${innerContent}
+      </details></div>
+     </div>`;
+  })();
+
+  // 表示順に組み立て（3セクションを1グループにまとめて区切り線を除去）
+  const sec1 = [urlHtml, titleHtml, applicantHtml].filter(Boolean).join("");
+  let inner = "";
+  if (sec1) inner += sec1;
+  inner += numDateTable;
+  if (progressHtml) inner += progressHtml;
+  return `<div class="biblio-group">${inner}</div>`;
 }
 
 // ─── Mermaid rendering ────────────────────────────────────────────────────

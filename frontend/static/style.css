@@ -110,6 +110,22 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
   text-overflow: ellipsis;
 }
 .patent-item .meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.patent-item { display: flex; align-items: flex-start; gap: 8px; position: relative; }
+.patent-item-body { flex: 1; min-width: 0; }
+.patent-delete-btn { flex-shrink: 0; opacity: 0; background: none; border: none; cursor: pointer; color: var(--c-text-muted); font-size: 13px; padding: 2px 4px; border-radius: 4px; transition: opacity .15s, color .15s; line-height: 1; margin-top: 2px; }
+.patent-item:hover .patent-delete-btn { opacity: 1; }
+.patent-delete-btn:hover { color: var(--c-error); background: var(--c-error-bg); }
+.patent-checkbox { flex-shrink: 0; margin-top: 4px; cursor: pointer; accent-color: var(--c-primary); width: 14px; height: 14px; }
+.patent-item.select-mode { cursor: pointer; }
+.sb-btn { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid; cursor: pointer; font-weight: 500; transition: background .12s; }
+.sb-btn-select { background: var(--c-bg); border-color: var(--c-border); color: var(--c-text-muted); }
+.sb-btn-select:hover { background: var(--c-border); }
+.sb-btn-danger { background: var(--c-error-bg); border-color: var(--c-error); color: var(--c-error); }
+.sb-btn-danger:hover:not(:disabled) { background: var(--c-error); color: #fff; }
+.sb-btn-danger:disabled { opacity: .4; cursor: not-allowed; }
+.sb-btn-cancel { background: var(--c-bg); border-color: var(--c-border); color: var(--c-text-muted); }
+.sb-btn-cancel:hover { background: var(--c-border); }
+#sidebar-delete-controls { display: flex; gap: 4px; }
 .empty-list { padding: 32px 16px; text-align: center; color: var(--c-text-muted); font-size: 13px; }
 
 /* Main content */
@@ -174,13 +190,29 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
 .biblio-group + .biblio-group { border-top: 1px solid var(--c-border); padding-top: 10px; }
 .biblio-group-title { font-size: 10px; font-weight: 600; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
 .biblio-entry { display: flex; gap: 6px; font-size: 13px; line-height: 1.6; padding: 1px 0; }
-.biblio-key { color: var(--c-text-muted); white-space: nowrap; flex-shrink: 0; }
+.biblio-key { color: var(--c-text-muted); white-space: nowrap; flex-shrink: 0; min-width: 7.5em; }
 .biblio-val { color: var(--c-text); }
 .biblio-val a { color: var(--c-primary); word-break: break-all; }
 .biblio-entry--block { flex-direction: column; gap: 2px; }
 .biblio-entry--block details { margin-top: 4px; }
-.biblio-entry--block summary { cursor: pointer; font-size: 12px; color: var(--c-primary); }
+.biblio-entry--block summary, .biblio-entry details summary { cursor: pointer; font-size: 12px; color: var(--c-primary); }
 .progress-text { font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 4px; padding: 8px; margin-top: 6px; }
+.progress-table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.5; margin-top: 6px; display: block; max-height: 400px; overflow-y: auto; }
+.progress-table th { background: var(--c-surface); color: var(--c-text-muted); font-weight: 600; text-align: left; padding: 5px 8px; border: 1px solid var(--c-border); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+.progress-table td { padding: 4px 8px; border: 1px solid var(--c-border); vertical-align: middle; color: var(--c-text); }
+.progress-table td:first-child { white-space: nowrap; text-align: right; color: var(--c-text-muted); }
+.progress-table td:last-child { white-space: nowrap; color: var(--c-text-muted); font-size: 10px; }
+.progress-table tbody tr:nth-child(even) { background: var(--c-bg); }
+.progress-table tbody tr:hover { background: var(--c-primary-light); }
+
+/* Number / Date table */
+.biblio-numdate { margin: 2px 0; }
+.numdate-table { border-collapse: collapse; font-size: 12px; }
+.numdate-table thead th { color: var(--c-text-muted); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; padding: 2px 10px 4px 0; text-align: left; border-bottom: 1px solid var(--c-border); }
+.numdate-table thead th:first-child { width: 36px; }
+.numdate-table tbody th { color: var(--c-text-muted); font-weight: 500; font-size: 11px; padding: 3px 10px 3px 0; white-space: nowrap; text-align: left; }
+.numdate-table tbody td { padding: 3px 16px 3px 0; color: var(--c-text); white-space: nowrap; }
+.numdate-table tbody td:last-child { color: var(--c-text-muted); padding-right: 0; }
 
 /* Analysis section */
 #analysis-section { margin-bottom: 16px; }
