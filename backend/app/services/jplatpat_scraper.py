@@ -185,10 +185,11 @@ def parse_biblio(text: str) -> dict:
     if m:
         result["publication_date"] = m.group(1).strip()
 
-    # 登録日（特許公報）
+    # 登録日（特許公報(B) の書誌から取得）
     m = re.search(r'【登録日】\s*(.+)', text)
     if m:
         result["registration_date"] = m.group(1).strip()
+
 
     # 出願人（公開公報）
     applicant_section = re.search(
@@ -356,17 +357,45 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
 
         logger.debug(f"ISN={isn}, DOCU_KEY={docu_key}, JPA_KEY={docu_key_jpa}")
 
-        # ---- ステップ5: 公開番号リンクをクリック → 新タブで p0200 が開く ----
-        logger.debug("公開番号リンクをクリックして文献表示ページへ移動")
-        with context.expect_page() as new_page_info:
-            page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
+        # ---- ステップ5: 文献表示ページへ移動 ----
+        # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
+        # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
+        reg_link = page.locator("p[id*='regNumNum'] a")
+        if reg_link.count() > 0:
+            logger.debug("登録番号リンクをクリック（特許公報Bを取得）")
+            with context.expect_page() as new_page_info:
+                reg_link.first.click()
+        else:
+            logger.debug("公開番号リンクをクリック（公開公報Aを取得）")
+            with context.expect_page() as new_page_info:
+                page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
 
         detail_page = new_page_info.value
+
+        # B 公報ページが自動的に wsp1201 を呼ぶので、そのリクエストから DOCU_KEY をキャプチャ
+        captured_docu_key: list[str] = []
+        def _capture_docu_key(request):
+            if "/wsp1201" in request.url:
+                try:
+                    body = json.loads(request.post_data or "{}")
+                    dk = body.get("DOCU_KEY")
+                    if dk:
+                        captured_docu_key.append(dk)
+                except Exception:
+                    pass
+        detail_page.on("request", _capture_docu_key)
+
         try:
             detail_page.wait_for_load_state("networkidle", timeout=30000)
         except Exception:
             pass
         detail_page.wait_for_timeout(5000)
+
+        if captured_docu_key:
+            docu_key = captured_docu_key[0]
+            logger.debug("B ページの wsp1201 から DOCU_KEY 取得: %s", docu_key)
+        else:
+            logger.debug("DOCU_KEY キャプチャ失敗。元の docu_key を使用: %s", docu_key)
 
         # ---- ステップ6〜9: 各セクションを取得 ----
         logger.debug("書誌情報 (wsp1201) 取得")
@@ -415,7 +444,8 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
         raw_claims = claims_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
         raw_desc = desc_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
 
-        biblio_fields = parse_biblio(html_to_text(raw_biblio))
+        biblio_text = html_to_text(raw_biblio)
+        biblio_fields = parse_biblio(biblio_text)
 
         biblio = PatentBiblio(
             patent_number=biblio_fields.get("patent_number", ""),
