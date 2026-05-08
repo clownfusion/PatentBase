@@ -38,14 +38,20 @@ class PatentBiblio:
     """書誌情報。"""
     patent_number: str           # 公開番号 (例: 特開2020-060350)
     title: str = ""              # 発明の名称
-    applicant: str = ""          # 出願人
+    applicant: str = ""          # 出願人（公開公報）
+    patentee: str = ""           # 特許権者（特許公報）
     inventor: str = ""           # 発明者
     filing_date: str = ""        # 出願日
     publication_date: str = ""   # 公開日
+    registration_date: str = ""  # 登録日（特許公報）
     ipc_codes: str = ""          # 国際特許分類
     fi_codes: str = ""           # FI コード
     app_number: str = ""         # 出願番号
-    status: str = ""             # ステータス
+    publication_type: str = ""   # 公報種別 (例: 公開特許公報(A))
+    registration_number: str = ""# 特許番号 (例: 特許第7807828号)
+    status: str = ""             # ステータス（例: 特許 有効）
+    progress_info: str = ""      # 経過情報（経過記録タブのテキスト）
+    jplatpat_url: str = ""       # J-PlatPat 永続リンク URL
     # 内部識別子（API 呼び出し時に使用）
     isn: str = ""
     hash_value: str = ""
@@ -146,6 +152,11 @@ def parse_biblio(text: str) -> dict:
     """TEXT_DATA (書誌) からキー情報を抽出する。"""
     result = {}
 
+    # 公報種別
+    m = re.search(r'【公報種別】\s*(.+)', text)
+    if m:
+        result["publication_type"] = m.group(1).strip()
+
     # 発明の名称
     m = re.search(r'【発明の名称】\s*(.+)', text)
     if m:
@@ -161,27 +172,46 @@ def parse_biblio(text: str) -> dict:
     if m:
         result["patent_number"] = m.group(1).strip()
 
-    # 公開日
-    m = re.search(r'【公開日】\s*(.+)', text)
+    # 特許番号（登録公報）
+    m = re.search(r'【特許番号】\s*(.+)', text)
     if m:
-        result["publication_date"] = m.group(1).strip()
+        result["registration_number"] = m.group(1).strip()
 
     # 出願日
     m = re.search(r'【出願日】\s*(.+)', text)
     if m:
         result["filing_date"] = m.group(1).strip()
 
-    # 出願人・代理人・発明者のセクション構造を解析
-    # 書誌情報は [(71)【出願人】 ... (74)【代理人】 ... (72)【発明者】 ...] の順
-    # 各セクションの【氏名又は名称】または【氏名】を抽出する
+    # 公開日
+    m = re.search(r'【公開日】\s*(.+)', text)
+    if m:
+        result["publication_date"] = m.group(1).strip()
+
+    # 登録日（特許公報(B) の書誌から取得）
+    m = re.search(r'【登録日】\s*(.+)', text)
+    if m:
+        result["registration_date"] = m.group(1).strip()
+
+
+    # 出願人（公開公報）
     applicant_section = re.search(
-        r'【出願人】(.*?)(?=【代理人】|【発明者】|【テーマコード】|$)', text, re.DOTALL
+        r'【出願人】(.*?)(?=【代理人】|【発明者】|【特許権者】|【テーマコード】|$)', text, re.DOTALL
     )
     if applicant_section:
         names = re.findall(r'【氏名又は名称】\s*(.+)', applicant_section.group(1))
         if names:
             result["applicant"] = " / ".join(n.strip() for n in names[:5])
 
+    # 特許権者（特許公報）
+    patentee_section = re.search(
+        r'【特許権者】(.*?)(?=【代理人】|【発明者】|【テーマコード】|$)', text, re.DOTALL
+    )
+    if patentee_section:
+        names = re.findall(r'【氏名又は名称】\s*(.+)', patentee_section.group(1))
+        if names:
+            result["patentee"] = " / ".join(n.strip() for n in names[:5])
+
+    # 発明者
     inventor_section = re.search(
         r'【発明者】(.*?)(?=【テーマコード】|【Ｆターム】|$)', text, re.DOTALL
     )
@@ -236,38 +266,53 @@ async def fetch_patent(patent_number: str) -> PatentDocument:
     """
     import concurrent.futures
 
-    normalized = normalize_patent_number(patent_number)
-    logger.info(f"J-PlatPat 取得開始: {patent_number} → {normalized}")
+    query = patent_number.strip()
+    logger.info(f"J-PlatPat 取得開始: {query}")
 
     # Windows の asyncio (ProactorEventLoop / SelectorEventLoop 両方) は
     # サブプロセス生成と add_reader() を同時にサポートできないため Playwright async API が動作しない。
     # sync_playwright をスレッドプール内で実行することで回避する。
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return await loop.run_in_executor(pool, _run_playwright_in_thread, normalized)
+        return await loop.run_in_executor(pool, _run_playwright_in_thread, query)
 
 
-def _run_playwright_in_thread(normalized_number: str) -> PatentDocument:
+def _run_playwright_in_thread(query: str) -> PatentDocument:
     """Playwright 同期 API をスレッド内で実行する（asyncio 非依存）。"""
+    import os
+    import sys
+    from pathlib import Path
     from playwright.sync_api import sync_playwright
+
+    # LOCALAPPDATA から ms-playwright のパスを解決する
+    local_app_data = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    ms_playwright = Path(local_app_data) / "ms-playwright"
+    chrome_exe = ms_playwright / "chromium-1217" / "chrome-win64" / "chrome.exe"
+
+    # PLAYWRIGHT_BROWSERS_PATH を明示的にセット
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(ms_playwright)
+
+    launch_kwargs: dict = {"headless": True}
+    if sys.platform == "win32" and chrome_exe.exists():
+        launch_kwargs["executable_path"] = str(chrome_exe)
+
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(**launch_kwargs)
         try:
             context = browser.new_context(locale="ja-JP")
-            return _scrape_patent_sync(context, normalized_number)
+            return _scrape_patent_sync(context, query)
         finally:
             browser.close()
 
 
-def _scrape_patent_sync(context, normalized_number: str) -> PatentDocument:
+def _scrape_patent_sync(context, query: str) -> PatentDocument:
     """Playwright 同期コンテキストを使って特許データをスクレイピングする。"""
     page = context.new_page()
 
     wsp_response: dict = {}
 
     def capture_wsp_search(response):
-        # 番号照会 (wsp0102) と 簡易検索 (wsp0103) 両方に対応
-        if ("wsp0102" in response.url or "wsp0103" in response.url) and response.status == 200:
+        if "wsp0103" in response.url and response.status == 200:
             try:
                 data = response.json()
                 lst = data.get("SEARCH_RSLT_LIST") or []
@@ -287,62 +332,149 @@ def _scrape_patent_sync(context, normalized_number: str) -> PatentDocument:
         page.goto("https://www.j-platpat.inpit.go.jp/", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=30000)
 
-        # ---- ステップ2 & 3: 検索 (番号種別で分岐) ----
-        # 数字のみ → 登録番号 → 簡易検索 (wsp0103)
-        # 年号-連番 → 公開番号 → 番号照会 (wsp0102)
-        if re.match(r'^\d{6,10}$', normalized_number):
-            # 簡易検索: Angular フォームに値をセットしてから検索ボタンをクリック
-            query = f"特許{normalized_number}"
-            logger.debug(f"簡易検索: {query}")
-            page.evaluate("""(val) => {
-                const input = document.getElementById('s01_srchCondtn_txtSimpleSearch');
-                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                setter.call(input, val);
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }""", query)
-            page.wait_for_timeout(500)
-            page.click("#s01_srchBtn_btnSearch")
-            page.wait_for_load_state("networkidle", timeout=20000)
-            page.wait_for_timeout(3000)
-        else:
-            # 番号照会
-            logger.debug(f"番号照会: {normalized_number}")
-            page.click("#cfc001_globalNav_item_0")
-            page.wait_for_timeout(300)
-            page.click("#cfc001_globalNav_sub_item_0_0")
-            page.wait_for_load_state("networkidle", timeout=15000)
-            page.wait_for_timeout(2000)
-            page.locator("#p00_srchCondtn_txtDocNoInputNo1").fill(normalized_number)
-            page.wait_for_timeout(500)
-            page.click("#p00_searchBtn_btnDocInquiry")
-            page.wait_for_load_state("networkidle", timeout=20000)
-            page.wait_for_timeout(3000)
+        # ---- ステップ2 & 3: 簡易検索（入力をそのまま渡す）----
+        logger.debug(f"簡易検索: {query}")
+        page.evaluate("""(val) => {
+            const input = document.getElementById('s01_srchCondtn_txtSimpleSearch');
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(input, val);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }""", query)
+        page.wait_for_timeout(500)
+        page.click("#s01_srchBtn_btnSearch")
+        page.wait_for_load_state("networkidle", timeout=20000)
+        page.wait_for_timeout(3000)
 
         # ---- ステップ4: 検索結果の確認 ----
         item = wsp_response.get("item", {})
         isn = item.get("ISN", "")
         hash_value = item.get("HASH_VALUE", "")
         publi_num_internal = item.get("PUBLI_NUM", "")
-        docu_key = wsp_response.get("docu_key", f"特開{normalized_number}")
+        docu_key = wsp_response.get("docu_key", query)
         docu_key_jpa = _make_jpa_key(publi_num_internal)
 
         if not isn:
-            raise ValueError(f"特許番号 {normalized_number} が J-PlatPat で見つかりませんでした。")
+            raise ValueError(f"「{query}」が J-PlatPat 簡易検索で見つかりませんでした。")
 
         logger.debug(f"ISN={isn}, DOCU_KEY={docu_key}, JPA_KEY={docu_key_jpa}")
 
-        # ---- ステップ5: 公開番号リンクをクリック → 新タブで p0200 が開く ----
-        logger.debug("公開番号リンクをクリックして文献表示ページへ移動")
-        with context.expect_page() as new_page_info:
-            page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
+        # ---- ステップ4.5: ステータス取得（検索結果ページ）----
+        status = ""
+        try:
+            status_labels = page.locator("p[id*='_status0'] label")
+            cnt = status_labels.count()
+            if cnt > 0:
+                parts = [status_labels.nth(i).inner_text().strip() for i in range(cnt)]
+                status = " / ".join(p for p in parts if p)
+            logger.debug(f"ステータス: {status}")
+        except Exception as e:
+            logger.warning(f"ステータス取得エラー: {e}")
+
+        # ---- ステップ4.6: J-PlatPat URL 取得 ----
+        # URL ボタンは新ページではなく Angular Material ダイアログを開くため、
+        # context.expect_page() は使わず、ダイアログ内テキストから URL を抽出する
+        jplatpat_url = ""
+        try:
+            url_btn = page.locator("a[id*='_url0']")
+            if url_btn.count() > 0:
+                url_btn.first.click()
+                page.wait_for_timeout(1500)
+                overlay = page.locator(".cdk-overlay-container")
+                if overlay.count() > 0:
+                    text = overlay.first.inner_text()
+                    m = re.search(r'https?://[^\s"\'<>　、）]+', text)
+                    if m:
+                        jplatpat_url = m.group(0).rstrip("。、）」』")
+                # ダイアログを Escape で閉じる
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(800)
+            logger.debug(f"J-PlatPat URL: {jplatpat_url}")
+        except Exception as e:
+            logger.warning(f"J-PlatPat URL 取得エラー: {e}")
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+        # ---- ステップ4.7: 経過情報取得 ----
+        progress_info = ""
+        try:
+            prog_link = page.locator("a[id*='_progReferenceInfo0']")
+            if prog_link.count() > 0:
+                with context.expect_page(timeout=10000) as prog_page_info:
+                    prog_link.first.click()
+                prog_page = prog_page_info.value
+                try:
+                    prog_page.wait_for_load_state("networkidle", timeout=25000)
+                    prog_page.wait_for_timeout(2000)
+                    keika_tab = prog_page.locator(
+                        "a:has-text('経過記録'), li:has-text('経過記録') a, [role='tab']:has-text('経過記録')"
+                    )
+                    if keika_tab.count() > 0:
+                        keika_tab.first.click()
+                        prog_page.wait_for_timeout(2000)
+                    body_text = prog_page.inner_text("body")
+                    progress_info = body_text[:8000] if body_text else ""
+                finally:
+                    prog_page.close()
+            logger.debug(f"経過情報: {len(progress_info)}文字")
+        except Exception as e:
+            logger.warning(f"経過情報取得エラー: {e}")
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+        # 残存オーバーレイをクリア（後続クリックのブロック防止）
+        try:
+            if page.locator(".cdk-overlay-backdrop").count() > 0:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(800)
+        except Exception:
+            pass
+
+        # ---- ステップ5: 文献表示ページへ移動 ----
+        # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
+        # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
+        reg_link = page.locator("p[id*='regNumNum'] a")
+        if reg_link.count() > 0:
+            logger.debug("登録番号リンクをクリック（特許公報Bを取得）")
+            with context.expect_page() as new_page_info:
+                reg_link.first.click()
+        else:
+            logger.debug("公開番号リンクをクリック（公開公報Aを取得）")
+            with context.expect_page() as new_page_info:
+                page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
 
         detail_page = new_page_info.value
+
+        # B 公報ページが自動的に wsp1201 を呼ぶので、そのリクエストから DOCU_KEY をキャプチャ
+        captured_docu_key: list[str] = []
+        def _capture_docu_key(request):
+            if "/wsp1201" in request.url:
+                try:
+                    body = json.loads(request.post_data or "{}")
+                    dk = body.get("DOCU_KEY")
+                    if dk:
+                        captured_docu_key.append(dk)
+                except Exception:
+                    pass
+        detail_page.on("request", _capture_docu_key)
+
         try:
             detail_page.wait_for_load_state("networkidle", timeout=30000)
         except Exception:
             pass
         detail_page.wait_for_timeout(5000)
+
+        if captured_docu_key:
+            docu_key = captured_docu_key[0]
+            logger.debug("B ページの wsp1201 から DOCU_KEY 取得: %s", docu_key)
+        else:
+            logger.debug("DOCU_KEY キャプチャ失敗。元の docu_key を使用: %s", docu_key)
 
         # ---- ステップ6〜9: 各セクションを取得 ----
         logger.debug("書誌情報 (wsp1201) 取得")
@@ -391,18 +523,26 @@ def _scrape_patent_sync(context, normalized_number: str) -> PatentDocument:
         raw_claims = claims_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
         raw_desc = desc_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
 
-        biblio_fields = parse_biblio(html_to_text(raw_biblio))
+        biblio_text = html_to_text(raw_biblio)
+        biblio_fields = parse_biblio(biblio_text)
 
         biblio = PatentBiblio(
-            patent_number=biblio_fields.get("patent_number", normalized_number),
+            patent_number=biblio_fields.get("patent_number", ""),
             title=biblio_fields.get("title", ""),
             applicant=biblio_fields.get("applicant", ""),
+            patentee=biblio_fields.get("patentee", ""),
             inventor=biblio_fields.get("inventor", ""),
             filing_date=biblio_fields.get("filing_date", ""),
             publication_date=biblio_fields.get("publication_date", ""),
+            registration_date=biblio_fields.get("registration_date", ""),
             ipc_codes=biblio_fields.get("ipc_codes", ""),
             fi_codes=biblio_fields.get("fi_codes", ""),
             app_number=biblio_fields.get("app_number", ""),
+            publication_type=biblio_fields.get("publication_type", ""),
+            registration_number=biblio_fields.get("registration_number", ""),
+            status=status,
+            progress_info=progress_info,
+            jplatpat_url=jplatpat_url,
             isn=isn,
             hash_value=hash_value,
             docu_key_jpa=docu_key_jpa,
@@ -440,7 +580,32 @@ def _make_jpa_key(publi_num: str) -> str:
     # 502060350 = 50 + 2060350?  → 50 は何か
     # wsp3101 では DOCU_KEY: "JPA 502060350"
     # gazette path: .../502060000/502060300/502060350/...
-    # publi_num "0102020060350": 01=法律区分(JP特許), 2020=年4桁, 0060350=番号7桁
+    # publi_num "0102020060350": 01=法律区分(JP特許), 2020=年, 0060350=番号(7桁)
+    # JPA キー = "JPA " + 年下2桁 + 番号7桁 = "JPA 200060350"? いや違う
+    # 実際: "JPA 502060350" (from explore_jplatpat29 API request body)
+    # gazette: "502060350" = 50 + 2 + 060350?
+    # 50=何か, 2020年の下1桁=0, 060350=番号
+    # 別の解釈: 公開番号 "2020-060350" → "5" + "02060350"
+    #   先頭の5 = 西暦 2020年の変換? 平成換算?
+    # 令和 0= 2019-, 2020=令和2年=2
+    # または特開番号の別形式: 5=A種?, 02060350=年下2桁+番号6桁
+    # "502060350" = 5 + 02 + 060350 → 5=公報種別A?, 02=2020年下2桁, 060350=番号
+    # これが最も合理的
+    # publi_num "0102020060350" → 末尾7桁 "0060350" が番号部分
+    # → 年 "2020" → 下2桁 "20"
+    # → "5" + "20" + "060350" は "52060350" だが実際は "502060350"
+    # もしかして年と番号が逆? "5" + "02" + "0603500"?
+    # gazette: /502060000/502060300/502060350/
+    # 502060350 の下3桁が 350, その上3桁が 060, さらに上3桁が 502
+    # これはフォルダ階層: 502 060 000 / 502 060 300 / 502 060 350
+    # 9桁の番号: 502060350
+    # publi_num "0102020060350": 01=管轄JP, 2020=年4桁, 0060350=番号7桁
+    # 9桁 JPA キー: ?
+    # wsp3101 body: {"DOCU_KEY": "JPA 502060350"}
+    # JPA + 空白 + 9桁数字
+    # 別の特許で検証が必要だが、今は publi_num から変換する
+    # publi_num = "0102020060350" (13桁)
+    # 頭から: 01(2桁) + 2020(4桁) + 0060350(7桁)
     # JPA キー = "JPA " + 5 + 年下2桁 + 番号7桁
     # = "JPA " + "5" + "20" + "0060350" = "JPA 5200060350" (10桁)? 違う
     # gazette path では 502060350 (9桁)

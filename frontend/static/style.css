@@ -162,11 +162,25 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
 .card-header h3 { font-size: 13px; font-weight: 600; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: .4px; }
 .card-body { padding: 16px 20px; }
 
-/* Biblio grid */
+/* Biblio grid (legacy) */
 .biblio-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 @media (max-width: 600px) { .biblio-grid { grid-template-columns: 1fr; } }
 .biblio-item label { font-size: 11px; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: .4px; display: block; margin-bottom: 2px; }
 .biblio-item span { font-size: 14px; color: var(--c-text); }
+
+/* Biblio groups */
+.biblio-group { margin-bottom: 12px; }
+.biblio-group:last-child { margin-bottom: 0; }
+.biblio-group + .biblio-group { border-top: 1px solid var(--c-border); padding-top: 10px; }
+.biblio-group-title { font-size: 10px; font-weight: 600; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.biblio-entry { display: flex; gap: 6px; font-size: 13px; line-height: 1.6; padding: 1px 0; }
+.biblio-key { color: var(--c-text-muted); white-space: nowrap; flex-shrink: 0; }
+.biblio-val { color: var(--c-text); }
+.biblio-val a { color: var(--c-primary); word-break: break-all; }
+.biblio-entry--block { flex-direction: column; gap: 2px; }
+.biblio-entry--block details { margin-top: 4px; }
+.biblio-entry--block summary { cursor: pointer; font-size: 12px; color: var(--c-primary); }
+.progress-text { font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 4px; padding: 8px; margin-top: 6px; }
 
 /* Analysis section */
 #analysis-section { margin-bottom: 16px; }

@@ -51,6 +51,7 @@ async function loadPatents() {
 function renderSidebar() {
   const list = document.getElementById("patent-list");
   const count = document.getElementById("patent-count");
+  if (!list || !count) return;
   count.textContent = state.patents.length;
 
   if (state.patents.length === 0) {
@@ -163,12 +164,7 @@ function renderDetail(patent) {
     <div class="card">
       <div class="card-header"><h3>書誌情報</h3></div>
       <div class="card-body">
-        <div class="biblio-grid">
-          ${biblioRow("出願人", patent.applicant || patent.metadata?.applicant)}
-          ${biblioRow("IPC 分類", patent.ipc_codes)}
-          ${biblioRow("データソース", patent.source)}
-          ${biblioRow("ステータス", patent.analysis_status)}
-        </div>
+        ${renderBiblio(patent)}
         ${patent.abstract ? `
           <hr class="divider" style="margin:14px 0">
           <div>
@@ -325,6 +321,66 @@ function biblioRow(label, value) {
   </div>`;
 }
 
+function renderBiblio(patent) {
+  const m = patent.metadata || {};
+  const isRegistered = !!m.registration_number;
+  const applicantLabel = (isRegistered && m.patentee) ? "特許権者" : "出願人";
+  const applicantValue = (isRegistered && m.patentee) ? m.patentee : (patent.applicant || m.applicant || "");
+
+  // ①～⑥: always show, "-" when empty
+  const row = (label, value) =>
+    `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${value ? escHtml(value) : "-"}</span></div>`;
+
+  // optional row: hide when empty
+  const optRow = (label, value) => value
+    ? `<div class="biblio-entry"><span class="biblio-key">【${label}】</span><span class="biblio-val">${escHtml(value)}</span></div>`
+    : "";
+
+  const groups = [
+    [
+      row("公報種別", m.publication_type),
+      row("発明の名称", patent.title),
+      row(applicantLabel, applicantValue),
+    ],
+    [
+      row("出願番号", m.app_number),
+      row("公開番号", m.publication_number || (!isRegistered ? patent.patent_number : "")),
+      isRegistered ? row("特許番号", m.registration_number) : "",
+    ],
+    [
+      row("出願日", patent.filing_date || m.filing_date),
+      row("公開日", patent.publication_date || m.publication_date),
+      isRegistered ? row("登録日", m.registration_date) : "",
+    ],
+  ];
+
+  const mainHtml = groups
+    .map(g => g.join(""))
+    .filter(Boolean)
+    .map(content => `<div class="biblio-group">${content}</div>`)
+    .join("");
+
+  // ⑦⑧⑨: additional fields
+  const statusHtml = optRow("ステータス", m.status);
+
+  const urlHtml = m.jplatpat_url
+    ? `<div class="biblio-entry"><span class="biblio-key">【J-PlatPat】</span><span class="biblio-val"><a href="${escHtml(m.jplatpat_url)}" target="_blank" rel="noopener noreferrer">${escHtml(m.jplatpat_url)}</a></span></div>`
+    : "";
+
+  const progressHtml = m.progress_info
+    ? `<div class="biblio-entry biblio-entry--block">
+        <span class="biblio-key">【経過情報】</span>
+        <details>
+          <summary>表示する</summary>
+          <pre class="progress-text">${escHtml(m.progress_info)}</pre>
+        </details>
+       </div>`
+    : "";
+
+  const extraHtml = [statusHtml, urlHtml, progressHtml].filter(Boolean).join("");
+  return mainHtml + (extraHtml ? `<div class="biblio-group">${extraHtml}</div>` : "");
+}
+
 // ─── Mermaid rendering ────────────────────────────────────────────────────
 let mermaidReady = false;
 function initMermaid() {
@@ -403,9 +459,7 @@ function closeModal() {
 
 function resetModal() {
   document.getElementById("register-number-input").value = "";
-  document.getElementById("pdf-filename").textContent = "";
   document.getElementById("word-filename").textContent = "";
-  document.getElementById("pdf-file-input").value = "";
   document.getElementById("word-file-input").value = "";
   setActiveTab("tab-number");
   setRegisterLoading(false);
@@ -432,6 +486,7 @@ function setRegisterLoading(loading, msg) {
 async function submitRegister() {
   const activePane = document.querySelector(".tab-pane.active");
   const tabId = activePane.id;
+  let registeredId = null;
 
   try {
     if (tabId === "tab-number-pane") {
@@ -442,21 +497,7 @@ async function submitRegister() {
       form.append("patent_number", num);
       const res = await api("POST", "/patents/from-number", form);
       toast(`「${res.title || res.patent_number}」を登録しました`, "success");
-      closeModal();
-      await loadPatents();
-      selectPatent(res.id);
-
-    } else if (tabId === "tab-pdf-pane") {
-      const fileInput = document.getElementById("pdf-file-input");
-      if (!fileInput.files.length) { toast("PDF ファイルを選択してください", "error"); return; }
-      setRegisterLoading(true, "PDF を読み込み中...");
-      const form = new FormData();
-      form.append("file", fileInput.files[0]);
-      const res = await api("POST", "/patents/from-pdf", form);
-      toast("PDF から特許を登録しました", "success");
-      closeModal();
-      await loadPatents();
-      selectPatent(res.id);
+      registeredId = res.id;
 
     } else if (tabId === "tab-word-pane") {
       const fileInput = document.getElementById("word-file-input");
@@ -466,13 +507,18 @@ async function submitRegister() {
       form.append("file", fileInput.files[0]);
       const res = await api("POST", "/patents/from-word", form);
       toast("Word から特許を登録しました", "success");
-      closeModal();
-      await loadPatents();
-      selectPatent(res.id);
+      registeredId = res.id;
     }
   } catch (e) {
     setRegisterLoading(false);
     toast("登録に失敗しました: " + e.message, "error");
+    return;
+  }
+
+  if (registeredId) {
+    closeModal();
+    await loadPatents();
+    selectPatent(registeredId);
   }
 }
 
@@ -494,7 +540,9 @@ function setupFileUpload(inputId, labelId) {
     e.preventDefault();
     area.classList.remove("drag-over");
     if (e.dataTransfer.files.length) {
-      input.files = e.dataTransfer.files;
+      const dt = new DataTransfer();
+      dt.items.add(e.dataTransfer.files[0]);
+      input.files = dt.files;
       label.textContent = e.dataTransfer.files[0].name;
       area.style.borderStyle = "solid";
     }
@@ -533,12 +581,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Tabs
-  ["tab-number", "tab-pdf", "tab-word"].forEach(tabId => {
+  ["tab-number", "tab-word"].forEach(tabId => {
     document.getElementById(tabId + "-btn").addEventListener("click", () => setActiveTab(tabId));
   });
 
   // File uploads
-  setupFileUpload("pdf-file-input", "pdf-filename");
   setupFileUpload("word-file-input", "word-filename");
 
   // Load initial data

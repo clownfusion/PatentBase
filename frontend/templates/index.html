@@ -47,10 +47,10 @@
       <div id="welcome">
         <div class="icon">🔍</div>
         <h2>PatentBase へようこそ</h2>
-        <p>特許番号・PDF・Word ファイルから特許を登録し、Claude AI による要約・権利化ポイント・請求項構造の分析ができます。</p>
+        <p>特許番号・Word ファイルから特許を登録し、Claude AI による要約・権利化ポイント・請求項構造の分析ができます。</p>
         <button class="btn btn-primary" onclick="openModal()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          最初の特許を登録する
+          新規登録
         </button>
       </div>
       <!-- Detail view (hidden until selected) -->
@@ -74,7 +74,6 @@
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab-btn active" id="tab-number-btn">🔢 特許番号</button>
-        <button class="tab-btn" id="tab-pdf-btn">📄 PDF</button>
         <button class="tab-btn" id="tab-word-btn">📝 Word</button>
       </div>
 
@@ -83,31 +82,9 @@
         <div class="form-group">
           <label for="register-number-input">特許番号</label>
           <input class="form-control" id="register-number-input" type="text"
-            placeholder="例: 特開2020-123456 / JP2020123456A / 2020-123456">
+            placeholder="例: 特許第5305285号 / 特開2020-123456 / JP2020123456A">
           <small>J-PlatPat から書誌情報・要約・請求項・明細書を自動取得します。</small>
-        </div>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;color:#64748b">
-          <strong>対応フォーマット</strong>
-          <ul style="margin-top:6px;padding-left:16px;line-height:1.8">
-            <li>特開 2020-123456</li>
-            <li>JP2020123456A</li>
-            <li>2020-123456</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- Tab: PDF -->
-      <div class="tab-pane" id="tab-pdf-pane">
-        <div class="form-group">
-          <label>PDF ファイル</label>
-          <label class="upload-area" for="pdf-file-input" id="pdf-upload-area">
-            <div class="icon">📄</div>
-            <p><strong>クリックして選択</strong>またはドラッグ＆ドロップ</p>
-            <p style="font-size:12px;margin-top:4px">.pdf ファイル</p>
-            <div class="filename" id="pdf-filename"></div>
-          </label>
-          <input type="file" id="pdf-file-input" accept=".pdf">
-          <small>J-PlatPat からダウンロードした公開特許公報 PDF に対応しています。</small>
+          <small style="display:block;margin-top:6px;color:var(--c-text-muted)">※ 公開番号を入力した場合でも、登録済みの特許は登録公報の情報が登録されます。</small>
         </div>
       </div>
 
@@ -136,6 +113,6 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>
