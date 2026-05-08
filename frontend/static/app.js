@@ -51,6 +51,7 @@ async function loadPatents() {
 function renderSidebar() {
   const list = document.getElementById("patent-list");
   const count = document.getElementById("patent-count");
+  if (!list || !count) return;
   count.textContent = state.patents.length;
 
   if (state.patents.length === 0) {
@@ -460,6 +461,7 @@ function setRegisterLoading(loading, msg) {
 async function submitRegister() {
   const activePane = document.querySelector(".tab-pane.active");
   const tabId = activePane.id;
+  let registeredId = null;
 
   try {
     if (tabId === "tab-number-pane") {
@@ -470,9 +472,7 @@ async function submitRegister() {
       form.append("patent_number", num);
       const res = await api("POST", "/patents/from-number", form);
       toast(`「${res.title || res.patent_number}」を登録しました`, "success");
-      closeModal();
-      await loadPatents();
-      selectPatent(res.id);
+      registeredId = res.id;
 
     } else if (tabId === "tab-word-pane") {
       const fileInput = document.getElementById("word-file-input");
@@ -482,13 +482,18 @@ async function submitRegister() {
       form.append("file", fileInput.files[0]);
       const res = await api("POST", "/patents/from-word", form);
       toast("Word から特許を登録しました", "success");
-      closeModal();
-      await loadPatents();
-      selectPatent(res.id);
+      registeredId = res.id;
     }
   } catch (e) {
     setRegisterLoading(false);
     toast("登録に失敗しました: " + e.message, "error");
+    return;
+  }
+
+  if (registeredId) {
+    closeModal();
+    await loadPatents();
+    selectPatent(registeredId);
   }
 }
 
