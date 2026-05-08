@@ -234,73 +234,97 @@ async def fetch_patent(patent_number: str) -> PatentDocument:
         ValueError: 特許が見つからない場合
         RuntimeError: スクレイピング中のエラー
     """
-    from playwright.async_api import async_playwright
+    import concurrent.futures
 
     normalized = normalize_patent_number(patent_number)
     logger.info(f"J-PlatPat 取得開始: {patent_number} → {normalized}")
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+    # Windows の asyncio (ProactorEventLoop / SelectorEventLoop 両方) は
+    # サブプロセス生成と add_reader() を同時にサポートできないため Playwright async API が動作しない。
+    # sync_playwright をスレッドプール内で実行することで回避する。
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return await loop.run_in_executor(pool, _run_playwright_in_thread, normalized)
+
+
+def _run_playwright_in_thread(normalized_number: str) -> PatentDocument:
+    """Playwright 同期 API をスレッド内で実行する（asyncio 非依存）。"""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
         try:
-            context = await browser.new_context(locale="ja-JP")
-            result = await _scrape_patent(context, normalized)
-            return result
+            context = browser.new_context(locale="ja-JP")
+            return _scrape_patent_sync(context, normalized_number)
         finally:
-            await browser.close()
+            browser.close()
 
 
-async def _scrape_patent(context, normalized_number: str) -> PatentDocument:
-    """Playwright コンテキストを使って特許データをスクレイピングする。"""
-    page = await context.new_page()
+def _scrape_patent_sync(context, normalized_number: str) -> PatentDocument:
+    """Playwright 同期コンテキストを使って特許データをスクレイピングする。"""
+    page = context.new_page()
 
-    # wsp0102 レスポンスをインターセプトして ISN/HASH を取得
-    wsp0102_response: dict = {}
+    wsp_response: dict = {}
 
-    async def capture_wsp0102(response):
-        if "wsp0102" in response.url and response.status == 200:
+    def capture_wsp_search(response):
+        # 番号照会 (wsp0102) と 簡易検索 (wsp0103) 両方に対応
+        if ("wsp0102" in response.url or "wsp0103" in response.url) and response.status == 200:
             try:
-                data = await response.json()
+                data = response.json()
                 lst = data.get("SEARCH_RSLT_LIST") or []
                 if lst:
-                    wsp0102_response["item"] = lst[0]
-                    # PUBLI_NUM_DISP は wsp1201 等の DOCU_KEY として使用
+                    wsp_response["item"] = lst[0]
                     disp = lst[0].get("PUBLI_NUM_DISP", "")
                     if disp:
-                        wsp0102_response["docu_key"] = disp
+                        wsp_response["docu_key"] = disp
             except Exception:
                 pass
 
-    page.on("response", capture_wsp0102)
+    page.on("response", capture_wsp_search)
 
     try:
         # ---- ステップ1: J-PlatPat トップページを開く ----
         logger.debug("J-PlatPat トップページへ移動")
-        await page.goto("https://www.j-platpat.inpit.go.jp/", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=30000)
+        page.goto("https://www.j-platpat.inpit.go.jp/", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=30000)
 
-        # ---- ステップ2: 特許・実用新案 → 番号照会 へ移動 ----
-        await page.click("#cfc001_globalNav_item_0")
-        await page.wait_for_timeout(300)
-        await page.click("#cfc001_globalNav_sub_item_0_0")
-        await page.wait_for_load_state("networkidle", timeout=15000)
-        await page.wait_for_timeout(2000)
-
-        # ---- ステップ3: 特許番号を入力して検索 ----
-        logger.debug(f"番号照会: {normalized_number}")
-        await page.locator("#p00_srchCondtn_txtDocNoInputNo1").fill(normalized_number)
-        await page.wait_for_timeout(500)
-        await page.click("#p00_searchBtn_btnDocInquiry")
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await page.wait_for_timeout(3000)
+        # ---- ステップ2 & 3: 検索 (番号種別で分岐) ----
+        # 数字のみ → 登録番号 → 簡易検索 (wsp0103)
+        # 年号-連番 → 公開番号 → 番号照会 (wsp0102)
+        if re.match(r'^\d{6,10}$', normalized_number):
+            # 簡易検索: Angular フォームに値をセットしてから検索ボタンをクリック
+            query = f"特許{normalized_number}"
+            logger.debug(f"簡易検索: {query}")
+            page.evaluate("""(val) => {
+                const input = document.getElementById('s01_srchCondtn_txtSimpleSearch');
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                setter.call(input, val);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }""", query)
+            page.wait_for_timeout(500)
+            page.click("#s01_srchBtn_btnSearch")
+            page.wait_for_load_state("networkidle", timeout=20000)
+            page.wait_for_timeout(3000)
+        else:
+            # 番号照会
+            logger.debug(f"番号照会: {normalized_number}")
+            page.click("#cfc001_globalNav_item_0")
+            page.wait_for_timeout(300)
+            page.click("#cfc001_globalNav_sub_item_0_0")
+            page.wait_for_load_state("networkidle", timeout=15000)
+            page.wait_for_timeout(2000)
+            page.locator("#p00_srchCondtn_txtDocNoInputNo1").fill(normalized_number)
+            page.wait_for_timeout(500)
+            page.click("#p00_searchBtn_btnDocInquiry")
+            page.wait_for_load_state("networkidle", timeout=20000)
+            page.wait_for_timeout(3000)
 
         # ---- ステップ4: 検索結果の確認 ----
-        # wsp0102 インターセプトで取得した内部識別子を使用
-        item = wsp0102_response.get("item", {})
+        item = wsp_response.get("item", {})
         isn = item.get("ISN", "")
         hash_value = item.get("HASH_VALUE", "")
         publi_num_internal = item.get("PUBLI_NUM", "")
-        # DOCU_KEY は wsp0102 の PUBLI_NUM_DISP を使用 (例: "特開2020-060350")
-        docu_key = wsp0102_response.get("docu_key", f"特開{normalized_number}")
+        docu_key = wsp_response.get("docu_key", f"特開{normalized_number}")
         docu_key_jpa = _make_jpa_key(publi_num_internal)
 
         if not isn:
@@ -310,81 +334,54 @@ async def _scrape_patent(context, normalized_number: str) -> PatentDocument:
 
         # ---- ステップ5: 公開番号リンクをクリック → 新タブで p0200 が開く ----
         logger.debug("公開番号リンクをクリックして文献表示ページへ移動")
-        async with context.expect_page() as new_page_info:
-            await page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
+        with context.expect_page() as new_page_info:
+            page.locator("td#patentUtltyIntnlNumOnlyLst_tableView_publicNumArea a").first.click()
 
-        detail_page = await new_page_info.value
+        detail_page = new_page_info.value
         try:
-            await detail_page.wait_for_load_state("networkidle", timeout=30000)
+            detail_page.wait_for_load_state("networkidle", timeout=30000)
         except Exception:
             pass
-        await detail_page.wait_for_timeout(5000)
+        detail_page.wait_for_timeout(5000)
 
-        # ---- ステップ6: 書誌情報 (wsp1201) を取得 ----
+        # ---- ステップ6〜9: 各セクションを取得 ----
         logger.debug("書誌情報 (wsp1201) 取得")
-        biblio_data = await _call_api(detail_page, "/app/comdocu/wsp1201", {
-            "DOCU_KEY": docu_key,
-            "ACQUISITION_MODE": "0",
-            "SPC_NUM": 1,
-            "TOTAL_PAGE_CNT": 0,
-            "USE_OF_LANG": "ja",
-            "WABUN_EIBUN": "0",
-            "BLOCK_NUM": 0,
-            "ISN": isn,
-            "OTID": None
+        biblio_data = _call_api_sync(detail_page, "/app/comdocu/wsp1201", {
+            "DOCU_KEY": docu_key, "ACQUISITION_MODE": "0", "SPC_NUM": 1,
+            "TOTAL_PAGE_CNT": 0, "USE_OF_LANG": "ja", "WABUN_EIBUN": "0",
+            "BLOCK_NUM": 0, "ISN": isn, "OTID": None,
         })
 
-        # ---- ステップ7: 要約 (wsp1202) を取得 ----
         logger.debug("要約 (wsp1202) 取得")
-        abstract_data = await _call_api(detail_page, "/app/comdocu/wsp1202", {
-            "DOCU_KEY": docu_key,
-            "ACQUISITION_MODE": "0",
-            "SPC_NUM": 2,
-            "TOTAL_PAGE_CNT": 0,
-            "USE_OF_LANG": "ja",
-            "WABUN_EIBUN": "0",
-            "BLOCK_NUM": 0,
-            "ISN": isn,
-            "OTID": None
+        abstract_data = _call_api_sync(detail_page, "/app/comdocu/wsp1202", {
+            "DOCU_KEY": docu_key, "ACQUISITION_MODE": "0", "SPC_NUM": 2,
+            "TOTAL_PAGE_CNT": 0, "USE_OF_LANG": "ja", "WABUN_EIBUN": "0",
+            "BLOCK_NUM": 0, "ISN": isn, "OTID": None,
         })
 
-        # ---- ステップ8: 請求の範囲 (wsp1203) を取得 ----
         logger.debug("請求の範囲 (wsp1203) 取得")
-        claims_data = await _call_api(detail_page, "/app/comdocu/wsp1203", {
-            "DOCU_KEY": docu_key,
-            "ACQUISITION_MODE": "0",
-            "SPC_NUM": 3,
-            "TOTAL_PAGE_CNT": 0,
-            "USE_OF_LANG": "ja",
-            "WABUN_EIBUN": "0",
-            "BLOCK_NUM": 0,
-            "ISN": isn,
-            "OTID": None
+        claims_data = _call_api_sync(detail_page, "/app/comdocu/wsp1203", {
+            "DOCU_KEY": docu_key, "ACQUISITION_MODE": "0", "SPC_NUM": 3,
+            "TOTAL_PAGE_CNT": 0, "USE_OF_LANG": "ja", "WABUN_EIBUN": "0",
+            "BLOCK_NUM": 0, "ISN": isn, "OTID": None,
         })
 
-        # ---- ステップ9: 詳細な説明 (wsp1204) を取得 ----
         logger.debug("詳細な説明 (wsp1204) 取得")
-        desc_data = await _call_api(detail_page, "/app/comdocu/wsp1204", {
-            "DOCU_KEY": docu_key,
-            "ACQUISITION_MODE": "0",
-            "SPC_NUM": 4,
-            "TOTAL_PAGE_CNT": 0,
-            "USE_OF_LANG": "ja",
-            "WABUN_EIBUN": "0",
-            "BLOCK_NUM": 0,
-            "ISN": isn,
-            "OTID": None
+        desc_data = _call_api_sync(detail_page, "/app/comdocu/wsp1204", {
+            "DOCU_KEY": docu_key, "ACQUISITION_MODE": "0", "SPC_NUM": 4,
+            "TOTAL_PAGE_CNT": 0, "USE_OF_LANG": "ja", "WABUN_EIBUN": "0",
+            "BLOCK_NUM": 0, "ISN": isn, "OTID": None,
         })
 
         # ---- ステップ10: 図面リンク (wsp3101) を取得 ----
         logger.debug("図面リンク (wsp3101) 取得")
         figures = []
         if docu_key_jpa and hash_value:
-            gazette_data = await _call_api(detail_page, "/app/comdocu/wsp3101", {
+            gazette_data = _call_api_sync(detail_page, "/app/comdocu/wsp3101", {
                 "DOCU_KEY": docu_key_jpa,
                 "OVERVIEW_AREA_DATA_EXISTS_FLG": 1,
                 "DRAWING_AREA_DATA_EXISTS_FLG": 1,
-                "CDN_HASH": hash_value
+                "CDN_HASH": hash_value,
             })
             figures = _parse_figures(gazette_data, hash_value)
 
@@ -394,12 +391,7 @@ async def _scrape_patent(context, normalized_number: str) -> PatentDocument:
         raw_claims = claims_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
         raw_desc = desc_data.get("DOCU_DATA", {}).get("TEXT_DATA", "")
 
-        biblio_text = html_to_text(raw_biblio)
-        abstract_text = html_to_text(raw_abstract)
-        claims_text = html_to_text(raw_claims)
-        desc_text = html_to_text(raw_desc)
-
-        biblio_fields = parse_biblio(biblio_text)
+        biblio_fields = parse_biblio(html_to_text(raw_biblio))
 
         biblio = PatentBiblio(
             patent_number=biblio_fields.get("patent_number", normalized_number),
@@ -418,9 +410,9 @@ async def _scrape_patent(context, normalized_number: str) -> PatentDocument:
 
         return PatentDocument(
             biblio=biblio,
-            abstract=abstract_text,
-            claims_text=claims_text,
-            description_text=desc_text,
+            abstract=html_to_text(raw_abstract),
+            claims_text=html_to_text(raw_claims),
+            description_text=html_to_text(raw_desc),
             figures=figures,
             raw_biblio_html=raw_biblio,
             raw_abstract_html=raw_abstract,
@@ -429,7 +421,7 @@ async def _scrape_patent(context, normalized_number: str) -> PatentDocument:
         )
 
     finally:
-        await page.close()
+        page.close()
 
 
 # ========== ヘルパー関数 ==========
@@ -448,32 +440,7 @@ def _make_jpa_key(publi_num: str) -> str:
     # 502060350 = 50 + 2060350?  → 50 は何か
     # wsp3101 では DOCU_KEY: "JPA 502060350"
     # gazette path: .../502060000/502060300/502060350/...
-    # publi_num "0102020060350": 01=法律区分(JP特許), 2020=年, 0060350=番号(7桁)
-    # JPA キー = "JPA " + 年下2桁 + 番号7桁 = "JPA 200060350"? いや違う
-    # 実際: "JPA 502060350" (from explore_jplatpat29 API request body)
-    # gazette: "502060350" = 50 + 2 + 060350?
-    # 50=何か, 2020年の下1桁=0, 060350=番号
-    # 別の解釈: 公開番号 "2020-060350" → "5" + "02060350"
-    #   先頭の5 = 西暦 2020年の変換? 平成換算?
-    # 令和 0= 2019-, 2020=令和2年=2
-    # または特開番号の別形式: 5=A種?, 02060350=年下2桁+番号6桁
-    # "502060350" = 5 + 02 + 060350 → 5=公報種別A?, 02=2020年下2桁, 060350=番号
-    # これが最も合理的
-    # publi_num "0102020060350" → 末尾7桁 "0060350" が番号部分
-    # → 年 "2020" → 下2桁 "20"
-    # → "5" + "20" + "060350" は "52060350" だが実際は "502060350"
-    # もしかして年と番号が逆? "5" + "02" + "0603500"?
-    # gazette: /502060000/502060300/502060350/
-    # 502060350 の下3桁が 350, その上3桁が 060, さらに上3桁が 502
-    # これはフォルダ階層: 502 060 000 / 502 060 300 / 502 060 350
-    # 9桁の番号: 502060350
-    # publi_num "0102020060350": 01=管轄JP, 2020=年4桁, 0060350=番号7桁
-    # 9桁 JPA キー: ?
-    # wsp3101 body: {"DOCU_KEY": "JPA 502060350"}
-    # JPA + 空白 + 9桁数字
-    # 別の特許で検証が必要だが、今は publi_num から変換する
-    # publi_num = "0102020060350" (13桁)
-    # 頭から: 01(2桁) + 2020(4桁) + 0060350(7桁)
+    # publi_num "0102020060350": 01=法律区分(JP特許), 2020=年4桁, 0060350=番号7桁
     # JPA キー = "JPA " + 5 + 年下2桁 + 番号7桁
     # = "JPA " + "5" + "20" + "0060350" = "JPA 5200060350" (10桁)? 違う
     # gazette path では 502060350 (9桁)
@@ -510,12 +477,11 @@ def _make_jpa_key(publi_num: str) -> str:
         return ""
 
 
-async def _call_api(page, endpoint: str, payload: dict) -> dict:
-    """ページのコンテキストから API を呼び出す (Cookie / セッションを引き継ぐ)。"""
+def _call_api_sync(page, endpoint: str, payload: dict) -> dict:
+    """ページのコンテキストから API を呼び出す・同期版 (Cookie / セッションを引き継ぐ)。"""
     try:
-        result = await page.evaluate(f"""
+        result = page.evaluate(f"""
             async () => {{
-                // まず wsc1101 (認証チェック) を呼ぶ
                 const serviceId = '{endpoint.split("/")[-1].upper()}';
                 try {{
                     await fetch('/app/docgw/wsc1101', {{
@@ -525,7 +491,6 @@ async def _call_api(page, endpoint: str, payload: dict) -> dict:
                     }});
                 }} catch(e) {{}}
 
-                // 本体の API を呼ぶ
                 const r = await fetch('{endpoint}', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},

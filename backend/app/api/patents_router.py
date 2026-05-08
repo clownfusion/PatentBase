@@ -19,11 +19,13 @@ async def register_from_number(
     try:
         doc = await jplatpat_scraper.fetch_patent(patent_number)
     except NotImplementedError as e:
-        raise HTTPException(status_code=501, detail=str(e))
+        raise HTTPException(
+            status_code=501,
+            detail=str(e) or "J-PlatPat スクレイパーが未実装または初期化に失敗しました",
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    import json
     figures_meta = [{"figure_number": f.figure_number, "url": f.url} for f in doc.figures]
     patent = _create_patent_record(
         db=db,

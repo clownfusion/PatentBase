@@ -5,7 +5,7 @@ cd /d "%~dp0"
 echo PatentBase を起動しています...
 
 REM サーバーを別ウィンドウで起動
-start "PatentBase Server" cmd /k "uv run uvicorn backend.app.main:app --reload --port 8765"
+start "PatentBase Server" cmd /k "uv run uvicorn backend.app.main:app --port 8765"
 
 REM サーバーの起動を待機（3秒）
 timeout /t 3 /nobreak > nul
