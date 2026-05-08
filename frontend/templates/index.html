@@ -74,7 +74,6 @@
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab-btn active" id="tab-number-btn">🔢 特許番号</button>
-        <button class="tab-btn" id="tab-pdf-btn">📄 PDF</button>
         <button class="tab-btn" id="tab-word-btn">📝 Word</button>
       </div>
 
@@ -83,31 +82,8 @@
         <div class="form-group">
           <label for="register-number-input">特許番号</label>
           <input class="form-control" id="register-number-input" type="text"
-            placeholder="例: 特開2020-123456 / JP2020123456A / 2020-123456">
+            placeholder="例: 特許第5305285号 / 特開2020-123456 / JP2020123456A">
           <small>J-PlatPat から書誌情報・要約・請求項・明細書を自動取得します。</small>
-        </div>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;color:#64748b">
-          <strong>対応フォーマット</strong>
-          <ul style="margin-top:6px;padding-left:16px;line-height:1.8">
-            <li>特開 2020-123456</li>
-            <li>JP2020123456A</li>
-            <li>2020-123456</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- Tab: PDF -->
-      <div class="tab-pane" id="tab-pdf-pane">
-        <div class="form-group">
-          <label>PDF ファイル</label>
-          <label class="upload-area" for="pdf-file-input" id="pdf-upload-area">
-            <div class="icon">📄</div>
-            <p><strong>クリックして選択</strong>またはドラッグ＆ドロップ</p>
-            <p style="font-size:12px;margin-top:4px">.pdf ファイル</p>
-            <div class="filename" id="pdf-filename"></div>
-          </label>
-          <input type="file" id="pdf-file-input" accept=".pdf">
-          <small>J-PlatPat からダウンロードした公開特許公報 PDF に対応しています。</small>
         </div>
       </div>
 

@@ -19,22 +19,45 @@ async def register_from_number(
     try:
         doc = await jplatpat_scraper.fetch_patent(patent_number)
     except NotImplementedError as e:
-        raise HTTPException(status_code=501, detail=str(e))
+        raise HTTPException(
+            status_code=501,
+            detail=str(e) or "J-PlatPat スクレイパーが未実装または初期化に失敗しました",
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    import json
+    b = doc.biblio
     figures_meta = [{"figure_number": f.figure_number, "url": f.url} for f in doc.figures]
+    # 特許公報は registration_number を、公開公報は patent_number (公開番号) を主番号とする
+    primary_number = b.registration_number or b.patent_number or patent_number
+    # 特許権者がいれば出願人として格納（特許公報）、なければ出願人（公開公報）
+    applicant_name = b.patentee or b.applicant
     patent = _create_patent_record(
         db=db,
-        patent_number=doc.biblio.patent_number,
+        patent_number=primary_number,
         source="jplatpat",
-        title=doc.biblio.title,
-        applicant=doc.biblio.applicant,
+        title=b.title,
+        applicant=applicant_name,
+        filing_date=b.filing_date,
+        publication_date=b.publication_date,
         abstract=doc.abstract,
         claims_text=doc.claims_text,
         description_text=doc.description_text,
-        metadata={"figures": figures_meta, "isn": doc.biblio.isn, "ipc": doc.biblio.ipc_codes},
+        metadata={
+            "figures": figures_meta,
+            "isn": b.isn,
+            "ipc": b.ipc_codes,
+            "publication_type": b.publication_type,
+            "app_number": b.app_number,
+            "publication_number": b.patent_number,
+            "registration_number": b.registration_number,
+            "filing_date": b.filing_date,
+            "publication_date": b.publication_date,
+            "registration_date": b.registration_date,
+            "patentee": b.patentee,
+            "applicant": b.applicant,
+            "inventor": b.inventor,
+        },
     )
     return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}
 
@@ -52,16 +75,31 @@ async def register_from_pdf(
         tmp_path = tmp.name
     try:
         doc = await pdf_importer.import_pdf(tmp_path)
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF の処理中にエラーが発生しました: {e}")
     finally:
         os.unlink(tmp_path)
 
+    b = doc.biblio
     patent = _create_patent_record(
         db=db,
         source="pdf",
+        patent_number=b.get("patent_number") or "【公開番号/登録番号】が含まれておらず不明",
+        title=b.get("title") or "【発明の名称】が含まれておらずタイトル不明",
+        applicant=b.get("applicant") or "【出願人】が含まれておらず不明",
         claims_text=doc.text,
-        metadata={"filename": file.filename, "images_count": len(doc.images)},
+        metadata={
+            "filename": file.filename,
+            "images_count": len(doc.images),
+            "ipc": b.get("ipc_codes", ""),
+            "app_number": b.get("app_number", ""),
+            "filing_date": b.get("filing_date", ""),
+            "publication_date": b.get("publication_date", ""),
+        },
     )
-    return {"id": patent.id}
+    return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}
 
 
 @router.post("/from-word")
@@ -76,16 +114,28 @@ async def register_from_word(
         tmp_path = tmp.name
     try:
         doc = await word_importer.import_word(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Word の処理中にエラーが発生しました: {e}")
     finally:
         os.unlink(tmp_path)
 
+    b = doc.biblio
     patent = _create_patent_record(
         db=db,
         source="word",
+        patent_number=b.get("patent_number") or "【公開番号/登録番号】が含まれておらず不明",
+        title=b.get("title") or "【発明の名称】が含まれておらずタイトル不明",
+        applicant=b.get("applicant") or "【出願人】が含まれておらず不明",
         claims_text=doc.text,
-        metadata={"filename": file.filename},
+        metadata={
+            "filename": file.filename,
+            "ipc": b.get("ipc_codes", ""),
+            "app_number": b.get("app_number", ""),
+            "filing_date": b.get("filing_date", ""),
+            "publication_date": b.get("publication_date", ""),
+        },
     )
-    return {"id": patent.id}
+    return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}
 
 
 @router.get("/{patent_id}")
@@ -108,6 +158,7 @@ def _create_patent_record(db: Session, source: str, claims_text: str = "",
                            patent_number: str = "", title: str = "",
                            applicant: str = "", abstract: str = "",
                            description_text: str = "",
+                           filing_date: str = "", publication_date: str = "",
                            metadata: dict | None = None) -> Patent:
     patent = Patent(
         id=str(uuid.uuid4()),
@@ -115,6 +166,8 @@ def _create_patent_record(db: Session, source: str, claims_text: str = "",
         source=source,
         title=title,
         applicant=applicant,
+        filing_date=filing_date or None,
+        publication_date=publication_date or None,
         abstract=abstract,
         claims_text=claims_text,
         description_text=description_text,
@@ -128,7 +181,6 @@ def _create_patent_record(db: Session, source: str, claims_text: str = "",
 
 
 def _patent_to_dict(p: Patent) -> dict:
-    import json as _json
     return {
         "id": p.id,
         "patent_number": p.patent_number,
@@ -136,6 +188,8 @@ def _patent_to_dict(p: Patent) -> dict:
         "title": p.title,
         "applicant": p.applicant,
         "ipc_codes": p.ipc_codes,
+        "filing_date": p.filing_date,
+        "publication_date": p.publication_date,
         "abstract": p.abstract,
         "summary": p.summary,
         "key_points": p.key_points,
