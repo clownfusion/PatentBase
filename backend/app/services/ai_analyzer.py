@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from .ai_provider import AIProvider, AnalysisInput
 from .claude_provider import claude_provider
+from .claude_code_provider import claude_code_provider
 
 PROMPT_DIR = Path(__file__).parents[1] / "prompts"
 
@@ -14,12 +15,32 @@ def _load_prompt(name: str) -> str:
 
 
 def _get_provider() -> AIProvider:
-    if not claude_provider.is_available:
-        raise RuntimeError(
-            "AI 分析機能を利用するには Claude API キーが必要です。"
-            ".env ファイルに ANTHROPIC_API_KEY を設定してください。"
-        )
-    return claude_provider
+    from backend.app.core.config import settings
+    ptype = settings.ai_provider_type
+
+    if ptype == "claude_code":
+        if not claude_code_provider.is_available:
+            raise RuntimeError(
+                "claude CLI が見つかりません。Claude Code をインストールして PATH を通してください。"
+            )
+        return claude_code_provider
+
+    if ptype == "api":
+        if not claude_provider.is_available:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY が設定されていません。.env ファイルに設定してください。"
+            )
+        return claude_provider
+
+    # auto: API キーがあれば API 優先、なければ Claude Code CLI
+    if claude_provider.is_available:
+        return claude_provider
+    if claude_code_provider.is_available:
+        return claude_code_provider
+    raise RuntimeError(
+        "AI 分析機能を利用するには ANTHROPIC_API_KEY または claude CLI が必要です。"
+        ".env に ANTHROPIC_API_KEY を設定するか、Claude Code をインストールしてください。"
+    )
 
 
 def compose_patent_text(

@@ -4,6 +4,7 @@ GET /reports/{patent_id}/drawio  → Draw.io XML ファイルダウンロード
 GET /reports/{patent_id}/word    → Word (.docx) ファイルダウンロード
 GET /reports/{patent_id}/excel   → Excel (.xlsx) ファイルダウンロード
 """
+import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -21,9 +22,16 @@ def _get_patent_or_404(patent_id: str, db: Session) -> Patent:
     return patent
 
 
-def _safe_filename(patent: Patent, ext: str) -> str:
+def _content_disposition(patent: Patent, ext: str) -> str:
+    """RFC 5987 形式の Content-Disposition ヘッダー値を返す。
+
+    日本語を含む特許番号でも latin-1 エンコードエラーが起きないよう
+    filename*=UTF-8''... 形式でパーセントエンコードする。
+    """
     num = (patent.patent_number or patent.id).replace("/", "-").replace(" ", "_")
-    return f"patent_{num}.{ext}"
+    filename = f"patent_{num}.{ext}"
+    encoded = urllib.parse.quote(filename.encode("utf-8"), safe="")
+    return f"attachment; filename*=UTF-8''{encoded}"
 
 
 @router.get("/{patent_id}/drawio")
@@ -38,9 +46,7 @@ def download_drawio(patent_id: str, db: Session = Depends(get_db)):
     return Response(
         content=patent.drawio_xml,
         media_type="application/xml",
-        headers={
-            "Content-Disposition": f'attachment; filename="{_safe_filename(patent, "drawio")}"'
-        },
+        headers={"Content-Disposition": _content_disposition(patent, "drawio")},
     )
 
 
@@ -55,9 +61,7 @@ def download_word(patent_id: str, db: Session = Depends(get_db)):
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": f'attachment; filename="{_safe_filename(patent, "docx")}"'
-        },
+        headers={"Content-Disposition": _content_disposition(patent, "docx")},
     )
 
 
@@ -72,7 +76,5 @@ def download_excel(patent_id: str, db: Session = Depends(get_db)):
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f'attachment; filename="{_safe_filename(patent, "xlsx")}"'
-        },
+        headers={"Content-Disposition": _content_disposition(patent, "xlsx")},
     )

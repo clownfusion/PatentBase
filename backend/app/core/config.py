@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
 
+    # AI プロバイダー選択: "auto" | "api" | "claude_code"
+    # auto: ANTHROPIC_API_KEY があれば API 優先、なければ Claude Code CLI
+    ai_provider_type: str = "auto"
+
     # DB
     db_dir: Path = BASE_DIR / "data"
 

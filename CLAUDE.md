@@ -45,10 +45,12 @@ FastAPI (backend/app/main.py)
     └── /reports/*       レポート生成エンドポイント
          ↓
     services/
-    ├── jplatpat_scraper.py   J-PlatPat スクレイピング (Playwright sync API)
-    ├── pdf_importer.py       PDF テキスト抽出 (pdfplumber / PyMuPDF)
-    ├── ai_analyzer.py        Claude API 統合 (claude-sonnet-4-6)
-    └── document_generator.py Word/Excel 出力 (python-docx, openpyxl)
+    ├── jplatpat_scraper.py      J-PlatPat スクレイピング (Playwright sync API)
+    ├── pdf_importer.py          PDF テキスト抽出 (pdfplumber / PyMuPDF)
+    ├── word_importer.py         Word (.docx) テキスト抽出・セクション分割
+    ├── ai_analyzer.py           AI 分析統合（プロバイダー切り替え対応）
+    ├── claude_code_provider.py  Claude Code CLI プロバイダー
+    └── document_generator.py   Word/Excel 出力 (python-docx, openpyxl)
          ↓
     SQLite (data/patents.db)
 ```
@@ -77,7 +79,9 @@ PatentBase/
 │       └── services/
 │           ├── jplatpat_scraper.py
 │           ├── pdf_importer.py
+│           ├── word_importer.py         # Word セクション分割
 │           ├── ai_analyzer.py
+│           ├── claude_code_provider.py  # Claude Code CLI プロバイダー
 │           └── document_generator.py
 ├── frontend/
 │   ├── static/                  # CSS / JS
@@ -86,6 +90,47 @@ PatentBase/
 │   └── PatentBase効率化計画.md  # フェーズ別要件・設計方針
 └── data/                        # SQLite DB（.gitignore 対象）
 ```
+
+---
+
+## AI プロバイダー設定
+
+`backend/app/core/config.py` の `ai_provider_type` で AI 分析に使うプロバイダーを制御する。
+
+| 値 | 動作 |
+|---|---|
+| `"auto"`（デフォルト） | `ANTHROPIC_API_KEY` があれば API、なければ Claude Code CLI にフォールバック |
+| `"api"` | Anthropic API のみ使用（キーがなければエラー） |
+| `"claude_code"` | Claude Code CLI のみ使用 |
+
+### Claude Code CLI プロバイダー（`claude_code_provider.py`）
+
+`claude -p --output-format json` をサブプロセスとして起動し、プロンプトを stdin で渡して結果を取得する。
+
+```python
+proc = await asyncio.create_subprocess_exec(
+    "claude", "-p", "--output-format", "json",
+    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+    stderr=asyncio.subprocess.PIPE)
+stdout, stderr = await asyncio.wait_for(proc.communicate(input=full_prompt.encode("utf-8")), timeout=300)
+data = json.loads(stdout)
+content = data.get("result", stdout.decode())
+```
+
+- `is_available`: `shutil.which("claude")` で CLI の存在を確認
+- タイムアウト: 300 秒（長い特許テキストを考慮）
+- CLI が見つからない場合: `RuntimeError` でわかりやすいエラーメッセージを返す
+
+### Claude Code CLI のインストール
+
+**重要**: Claude.ai Web アプリやデスクトップアプリとは別物。CLI は npm でインストールする。
+
+```cmd
+npm install -g @anthropic-ai/claude-code
+```
+
+インストール後、`claude --version` で動作確認すること。  
+CLI が正常にインストールされていれば、`ANTHROPIC_API_KEY` なしで AI 分析が利用できる。
 
 ---
 
@@ -211,6 +256,44 @@ def delete_patent(...): ...
 
 ## フロントエンド設計
 
+### サイドバー折りたたみ
+
+左サイドバーは手動トグル + compare モード時の自動折りたたみに対応している。
+
+```javascript
+// state オブジェクト内
+sidebarAutoCollapsed: false   // compare モードで自動折りたたみしたかを追跡
+
+// 主要関数
+_applySidebarCollapsed(collapsed)  // #sidebar に .collapsed クラスを付与/除去、ボタン表示を ‹/› で切り替え
+toggleSidebar()                    // 手動トグル（sidebarAutoCollapsed をクリア）
+switchViewMode(mode)               // compare 時に自動折りたたみ、compare 解除時に自動復元
+```
+
+- compare モード遷移時: サイドバーが開いていれば自動で折りたたみ、`sidebarAutoCollapsed = true` を記録
+- compare モード解除時: `sidebarAutoCollapsed` が true なら自動で展開してフラグをクリア
+- 手動でトグルした場合は `sidebarAutoCollapsed` をクリアし、以降の自動復元を抑制
+
+CSS: `#sidebar { transition: width .2s ease; }` / `#sidebar.collapsed { width: 0; border-right-width: 0; }`
+
+### detail-header のスティッキー固定
+
+詳細画面の「AI分析のみ / 原文のみ / 並べて比較」切り替えボタン行（`.detail-header`）は  
+スクロールしても常に画面上部に表示されるよう `position: sticky` を設定している。
+
+```css
+.detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--c-bg);
+    padding-top: 10px;
+    margin-top: -10px;
+    padding-bottom: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.06);
+}
+```
+
 ### 詳細画面の3モード切り替え
 
 特許詳細画面には「AI分析のみ / 原文のみ / 並べて比較」の3モードがある。  
@@ -270,17 +353,85 @@ border-radius の角丸クリップ目的で `overflow: hidden` を付けると 
 .source-tabs  { border-radius: 12px 12px 0 0; position: sticky; top: 0; }
 ```
 
+### 書誌情報カード（`renderBiblio`）
+
+書誌情報カードには「発明の名称」行を表示しない（詳細画面ヘッダーにタイトルが既に表示されているため重複を避ける）。
+
 ### 静的ファイルのキャッシュバスター
 
 `index.html` で JS・CSS をバージョン付きクエリパラメータで読み込んでいる。
 
 ```html
-<link rel="stylesheet" href="/static/style.css?v=5">
-<script src="/static/app.js?v=7"></script>
+<link rel="stylesheet" href="/static/style.css?v=6">
+<script src="/static/app.js?v=9"></script>
 ```
 
 **JS または CSS を変更したら、対応するバージョン番号をインクリメントすること。**  
 変更しないとブラウザキャッシュにより古いファイルが使われ続ける。
+
+---
+
+## Word インポート設計（`word_importer.py`）
+
+### `【書類名】` セクション分割
+
+Word 特許書類は `【書類名】セクション名` マーカーで章を区切る構造になっている。  
+段落単位ではなく**全文に対して正規表現を適用**してセクションを分割する。  
+（段落オブジェクト内に soft return `<w:br/>` で複数行が含まれることがあるため）
+
+```python
+_SECTION_SPLIT_RE = re.compile(r"【書類名】([^\n【]+)", re.MULTILINE)
+
+def _split_sections(full_text: str) -> dict[str, str]:
+    matches = list(_SECTION_SPLIT_RE.finditer(full_text))
+    # 各セクションの内容は次の【書類名】マーカーの直前まで
+    sections[key] = full_text[content_start:content_end].strip()
+```
+
+### セクション → フィールドのマッピング
+
+| `【書類名】` のセクション名 | 格納先フィールド |
+|---|---|
+| 要約書 | `abstract` |
+| 特許請求の範囲 | `claims_text` |
+| 明細書 | `description_text` |
+| 特許願 | biblio 解析のソース |
+
+マーカーが1つも見つからない場合は全文を `description_text` に格納する（`claims_text` ではない）。
+
+### タイトル・出願人フォールバック
+
+1. **タイトル**: `parse_biblio` が `【発明の名称】` を見つけられなかった場合、`description_text` 内を検索する
+   ```python
+   m = re.search(r"【発明の名称】\s*(.+)", description_text)
+   ```
+
+2. **出願人**: Word 書式では `【特許出願人】` を使う（J-PlatPat の `【出願人】` とは異なる）
+   ```python
+   m = re.search(r"【特許出願人】.*?【氏名又は名称】\s*([^\n]+)", source, re.DOTALL)
+   ```
+   `[^\n]+` で1行分のみキャプチャ（`re.DOTALL` と `.+` の組み合わせは残り全文を吸い込むので使わない）。
+
+---
+
+## レポートエクスポート注意点
+
+### RFC 5987 ファイル名エンコーディング
+
+ダウンロード時の `Content-Disposition` ヘッダーに日本語を含む場合、  
+HTTP ヘッダーの latin-1 制約により `UnicodeEncodeError` が発生する。
+
+`filename*=UTF-8''...` 形式（RFC 5987）でパーセントエンコードすること。
+
+```python
+def _content_disposition(patent: Patent, ext: str) -> str:
+    num = (patent.patent_number or patent.id).replace("/", "-").replace(" ", "_")
+    filename = f"patent_{num}.{ext}"
+    encoded = urllib.parse.quote(filename.encode("utf-8"), safe="")
+    return f"attachment; filename*=UTF-8''{encoded}"
+```
+
+`filename=` だけでなく必ず `filename*=UTF-8''` 形式を使うこと。
 
 ---
 

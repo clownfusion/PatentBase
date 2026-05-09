@@ -12,6 +12,9 @@ class PatentDocument:
     images: list[bytes] = field(default_factory=list)   # PNG バイト列のリスト
     metadata: dict = field(default_factory=dict)
     biblio: dict = field(default_factory=dict)           # 書誌情報（parse_biblio の結果）
+    abstract: str = ""                                   # 要約（【書類名】要約書）
+    claims_text: str = ""                                # 請求の範囲（【書類名】特許請求の範囲）
+    description_text: str = ""                           # 明細書（【書類名】明細書）
 
 
 async def import_pdf(path: Path | str) -> PatentDocument:

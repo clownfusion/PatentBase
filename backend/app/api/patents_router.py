@@ -124,13 +124,19 @@ async def register_from_word(
         os.unlink(tmp_path)
 
     b = doc.biblio
+    # 登録番号があれば優先、なければ公開番号
+    patent_num = b.get("registration_number") or b.get("patent_number") or "【公開番号/登録番号】が含まれておらず不明"
     patent = _create_patent_record(
         db=db,
         source="word",
-        patent_number=b.get("patent_number") or "【公開番号/登録番号】が含まれておらず不明",
+        patent_number=patent_num,
         title=b.get("title") or "【発明の名称】が含まれておらずタイトル不明",
         applicant=b.get("applicant") or "【出願人】が含まれておらず不明",
-        claims_text=doc.text,
+        abstract=doc.abstract,
+        claims_text=doc.claims_text,
+        description_text=doc.description_text,
+        filing_date=b.get("filing_date", ""),
+        publication_date=b.get("publication_date", ""),
         metadata={
             "filename": file.filename,
             "ipc": b.get("ipc_codes", ""),

@@ -9,6 +9,7 @@ const state = {
   selectMode: false,
   selectedIds: new Set(),
   viewMode: "analysis",
+  sidebarAutoCollapsed: false,
 };
 
 // タブごとのスクロール位置を保持（特許切り替え時にリセット）
@@ -382,6 +383,24 @@ function switchSourceTab(btn) {
   if (scrollEl) scrollEl.scrollTop = sourceScroll[btn.dataset.mode] || 0;
 }
 
+function _applySidebarCollapsed(collapsed) {
+  const sidebar = document.getElementById("sidebar");
+  const btn = document.getElementById("sidebar-toggle");
+  if (!sidebar) return;
+  sidebar.classList.toggle("collapsed", collapsed);
+  if (btn) {
+    btn.innerHTML = collapsed ? "&#8250;" : "&#8249;";
+    btn.title = collapsed ? "サイドバーを表示" : "サイドバーを非表示";
+  }
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  state.sidebarAutoCollapsed = false;
+  _applySidebarCollapsed(!sidebar.classList.contains("collapsed"));
+}
+
 function switchViewMode(mode) {
   state.viewMode = mode;
   const content = document.querySelector(".detail-content");
@@ -391,6 +410,18 @@ function switchViewMode(mode) {
   });
   const detail = document.getElementById("detail");
   if (detail) detail.classList.toggle("detail-compare-mode", mode === "compare");
+
+  // 比較モード時にサイドバーを自動折りたたみ、他モードで自動復元
+  if (mode === "compare") {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar && !sidebar.classList.contains("collapsed")) {
+      state.sidebarAutoCollapsed = true;
+      _applySidebarCollapsed(true);
+    }
+  } else if (state.sidebarAutoCollapsed) {
+    state.sidebarAutoCollapsed = false;
+    _applySidebarCollapsed(false);
+  }
 }
 
 function renderAnalysisSection(patent) {
@@ -522,8 +553,7 @@ function renderBiblio(patent) {
     ? `<div class="biblio-entry"><span class="biblio-key">【J-PlatPat】</span><span class="biblio-val"><a href="${escHtml(m.jplatpat_url)}" target="_blank" rel="noopener noreferrer">${escHtml(m.jplatpat_url)}</a></span></div>`
     : "";
 
-  // 発明の名称・特許権者
-  const titleHtml = `<div class="biblio-entry"><span class="biblio-key">【発明の名称】</span><span class="biblio-val">${patent.title ? escHtml(patent.title) : "-"}</span></div>`;
+  // 特許権者
   const applicantHtml = `<div class="biblio-entry"><span class="biblio-key">【${applicantLabel}】</span><span class="biblio-val">${applicantValue ? escHtml(applicantValue) : "-"}</span></div>`;
 
   // 番号と日付テーブル
@@ -580,7 +610,7 @@ function renderBiblio(patent) {
   })();
 
   // 表示順に組み立て（3セクションを1グループにまとめて区切り線を除去）
-  const sec1 = [urlHtml, titleHtml, applicantHtml].filter(Boolean).join("");
+  const sec1 = [urlHtml, applicantHtml].filter(Boolean).join("");
   let inner = "";
   if (sec1) inner += sec1;
   inner += numDateTable;
