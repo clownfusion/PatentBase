@@ -214,6 +214,8 @@ def _patent_to_dict(p: Patent) -> dict:
         "filing_date": p.filing_date,
         "publication_date": p.publication_date,
         "abstract": p.abstract,
+        "claims_text": p.claims_text,
+        "description_text": p.description_text,
         "summary": p.summary,
         "key_points": p.key_points,
         "claims_structured": p.claims_structured,

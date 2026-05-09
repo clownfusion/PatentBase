@@ -173,6 +173,23 @@ page.wait_for_timeout(800)
 
 ## FastAPI ルーティング注意点
 
+### `_patent_to_dict()` に含めるフィールドの管理
+
+`patents_router.py` の `_patent_to_dict()` が返す dict がそのまま API レスポンスになる。  
+DB に保存されていても、この関数に含めなければフロントエンドで参照できない。
+
+現在レスポンスに含まれる主なフィールド:
+
+| フィールド | 説明 |
+|---|---|
+| `abstract` | 要約 |
+| `claims_text` | 請求の範囲（全文） |
+| `description_text` | 詳細な説明（全文） |
+| `claims_structured` | AI 分析で構造化した請求項（JSON） |
+| `metadata` | 書誌情報・経過情報・図面等の補助情報 |
+
+新しいフィールドを DB モデルに追加した場合は、`_patent_to_dict()` への追記も忘れないこと。
+
 ### 静的パスは動的パスより前に定義する
 
 `/{patent_id}` のような動的パスは、同名の静的パスをすべて吸収してしまう。  
@@ -189,6 +206,81 @@ def delete_patents_bulk(...): ...
 @router.delete("/{patent_id}")  # 動的パスを後に
 def delete_patent(...): ...
 ```
+
+---
+
+## フロントエンド設計
+
+### 詳細画面の3モード切り替え
+
+特許詳細画面には「AI分析のみ / 原文のみ / 並べて比較」の3モードがある。  
+`state.viewMode`（`"analysis"` | `"source"` | `"compare"`）で管理する。
+
+```
+[ AI分析のみ | 原文のみ | 並べて比較 ]  ← detail-header 内のトグルボタン
+
+<div class="detail-content" data-view-mode="${state.viewMode}">
+  <div class="compare-left">   ← 書誌情報 + AI分析（source モードで非表示）
+  <div class="compare-right">  ← 請求の範囲・詳細な説明タブ（analysis モードで非表示）
+```
+
+CSS は `data-view-mode` 属性で3レイアウトを切り替える:
+- `analysis`: `.compare-right { display: none }` → 左ペインのみ全幅
+- `source`: `.compare-left { display: none }` + `.compare-right` に `overflow-y: auto; max-height`
+- `compare`: `display: flex` で左右並列。`.compare-right` は `position: sticky`
+
+### 原文タブパネル（`renderSourcePanel`）
+
+`compare-right` 内に `source-panel` として配置する。
+
+```javascript
+// app.js の主要関数
+renderSourcePanel(patent)   // 請求の範囲・詳細な説明のタブ HTML を生成
+switchViewMode(mode)        // data-view-mode 属性の切り替え + detail-compare-mode クラス
+switchSourceTab(btn)        // タブ切り替え + スクロール位置の保存・復元
+```
+
+**スクロール位置の保存・復元:**  
+`sourceScroll = { claims: 0, desc: 0 }` でタブごとのスクロール位置を保持する。  
+タブ切り替え時に現在の `scrollTop` を保存し、切り替え先の `scrollTop` を復元する。  
+特許をサイドバーから切り替えたとき（`renderDetail` 呼び出し時）に両値を 0 にリセットする。
+
+```javascript
+// switchSourceTab の処理順
+// 1. 現タブの scrollTop を sourceScroll[currentMode] に保存
+// 2. 新タブの DOM を active に切り替え
+// 3. compare-right の scrollTop を sourceScroll[newMode] に復元
+```
+
+### CSS: `position: sticky` と `overflow` の制約
+
+`position: sticky` は、親要素のいずれかに `overflow: hidden` または `overflow: auto/scroll` が  
+設定されていると、そのコンテナの外側では機能しない（スクロール不能になる）。
+
+**`.source-panel` では `overflow: hidden` を使用しない。**  
+border-radius の角丸クリップ目的で `overflow: hidden` を付けると `.source-tabs` の sticky が無効になる。  
+代わりに `.source-tabs` 自体に `border-radius: var(--radius-lg) var(--radius-lg) 0 0` を付与する。
+
+```css
+/* NG: overflow: hidden が sticky を破壊する */
+.source-panel { border-radius: 12px; overflow: hidden; }
+
+/* OK: タブ自体に角丸を付ける */
+.source-panel { border-radius: 12px; }  /* overflow 指定なし */
+.source-tabs  { border-radius: 12px 12px 0 0; position: sticky; top: 0; }
+```
+
+### 静的ファイルのキャッシュバスター
+
+`index.html` で JS・CSS をバージョン付きクエリパラメータで読み込んでいる。
+
+```html
+<link rel="stylesheet" href="/static/style.css?v=5">
+<script src="/static/app.js?v=7"></script>
+```
+
+**JS または CSS を変更したら、対応するバージョン番号をインクリメントすること。**  
+変更しないとブラウザキャッシュにより古いファイルが使われ続ける。
 
 ---
 

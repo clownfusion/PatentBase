@@ -8,7 +8,11 @@ const state = {
   pollingTimer: null,
   selectMode: false,
   selectedIds: new Set(),
+  viewMode: "analysis",
 };
+
+// タブごとのスクロール位置を保持（特許切り替え時にリセット）
+const sourceScroll = { claims: 0, desc: 0 };
 
 // ─── API helpers ──────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -254,6 +258,22 @@ function renderDetail(patent) {
   if (idx >= 0) state.patents[idx] = patent;
   renderSidebar();
 
+  // 特許が切り替わったときはスクロール位置をリセット
+  sourceScroll.claims = 0;
+  sourceScroll.desc = 0;
+
+  el.classList.toggle("detail-compare-mode", state.viewMode === "compare");
+
+  const analysisBtn = patent.analysis_status !== 'analyzing'
+    ? `<button class="btn btn-primary" id="btn-analyze" onclick="runAnalysis('${patent.id}')">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+         AI 分析実行
+       </button>`
+    : `<button class="btn btn-secondary" disabled>
+         <span class="spinner-sm spinner" style="display:inline-block;width:14px;height:14px;border-width:2px;border-color:rgba(0,0,0,.1);border-top-color:var(--c-text-muted)"></span>
+         分析中...
+       </button>`;
+
   el.innerHTML = `
     <div class="detail-header">
       <div class="detail-title">
@@ -265,60 +285,112 @@ function renderDetail(patent) {
         </div>
       </div>
       <div class="detail-actions">
-        ${patent.analysis_status !== 'analyzing'
-          ? `<button class="btn btn-primary" id="btn-analyze" onclick="runAnalysis('${patent.id}')">
-               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-               AI 分析実行
-             </button>`
-          : `<button class="btn btn-secondary" disabled>
-               <span class="spinner-sm spinner" style="display:inline-block;width:14px;height:14px;border-width:2px;border-color:rgba(0,0,0,.1);border-top-color:var(--c-text-muted)"></span>
-               分析中...
-             </button>`
-        }
+        <div class="view-mode-toggle">
+          <button class="mode-btn ${state.viewMode === 'analysis' ? 'active' : ''}" data-mode="analysis" onclick="switchViewMode('analysis')">AI分析のみ</button>
+          <button class="mode-btn ${state.viewMode === 'source' ? 'active' : ''}" data-mode="source" onclick="switchViewMode('source')">原文のみ</button>
+          <button class="mode-btn ${state.viewMode === 'compare' ? 'active' : ''}" data-mode="compare" onclick="switchViewMode('compare')">並べて比較</button>
+        </div>
+        ${analysisBtn}
       </div>
     </div>
 
-    <!-- 書誌情報 -->
-    <div class="card">
-      <div class="card-header"><h3>書誌情報${(patent.metadata || {}).publication_type ? '：' + escHtml((patent.metadata || {}).publication_type) : ''}</h3></div>
-      <div class="card-body">
-        ${renderBiblio(patent)}
-        ${patent.abstract ? `
-          <hr class="divider" style="margin:14px 0">
-          <div>
-            <label style="font-size:11px;color:var(--c-text-muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">要約</label>
-            <div class="abstract-text">${escHtml(patent.abstract)}</div>
-          </div>` : ""}
+    <div class="detail-content" data-view-mode="${state.viewMode}">
+      <div class="compare-left">
+        <!-- 書誌情報 -->
+        <div class="card">
+          <div class="card-header"><h3>書誌情報${(patent.metadata || {}).publication_type ? '：' + escHtml((patent.metadata || {}).publication_type) : ''}</h3></div>
+          <div class="card-body">
+            ${renderBiblio(patent)}
+            ${patent.abstract ? `
+              <hr class="divider" style="margin:14px 0">
+              <div>
+                <label style="font-size:11px;color:var(--c-text-muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">要約</label>
+                <div class="abstract-text">${escHtml(patent.abstract)}</div>
+              </div>` : ""}
+          </div>
+        </div>
+
+        <!-- AI 分析 -->
+        <div id="analysis-section">
+          ${renderAnalysisSection(patent)}
+        </div>
+
+        <!-- エクスポート -->
+        ${patent.analysis_status === 'done' ? `
+        <div class="export-bar">
+          <span>エクスポート：</span>
+          ${patent.drawio_xml
+            ? `<a href="/reports/${patent.id}/drawio" class="btn btn-secondary btn-sm" download>📐 Draw.io XML</a>`
+            : ""}
+          <a href="/reports/${patent.id}/word" class="btn btn-secondary btn-sm" id="btn-word">📄 Word</a>
+          <a href="/reports/${patent.id}/excel" class="btn btn-secondary btn-sm" id="btn-excel">📊 Excel</a>
+        </div>` : ""}
+      </div>
+
+      <div class="compare-right">
+        ${renderSourcePanel(patent)}
       </div>
     </div>
-
-    <!-- AI 分析 -->
-    <div id="analysis-section">
-      ${renderAnalysisSection(patent)}
-    </div>
-
-    <!-- エクスポート -->
-    ${patent.analysis_status === 'done' ? `
-    <div class="export-bar">
-      <span>エクスポート：</span>
-      ${patent.drawio_xml
-        ? `<a href="/reports/${patent.id}/drawio" class="btn btn-secondary btn-sm" download>
-             📐 Draw.io XML
-           </a>`
-        : ""}
-      <a href="/reports/${patent.id}/word" class="btn btn-secondary btn-sm" id="btn-word">
-        📄 Word
-      </a>
-      <a href="/reports/${patent.id}/excel" class="btn btn-secondary btn-sm" id="btn-excel">
-        📊 Excel
-      </a>
-    </div>` : ""}
   `;
 
   // Render mermaid if present
   if (patent.analysis_status === "done" && patent.mermaid_diagram) {
     renderMermaid(patent.mermaid_diagram);
   }
+}
+
+function renderSourcePanel(patent) {
+  const claimsText = patent.claims_text || "";
+  const descText = patent.description_text || "";
+  return `
+    <div class="source-panel">
+      <div class="source-tabs">
+        <button class="source-tab-btn active" data-mode="claims" onclick="switchSourceTab(this)">請求の範囲</button>
+        <button class="source-tab-btn" data-mode="desc" onclick="switchSourceTab(this)">詳細な説明</button>
+      </div>
+      <div class="source-pane active" id="source-claims">
+        ${claimsText
+          ? `<div class="source-text">${escHtml(claimsText)}</div>`
+          : `<div class="source-empty">データがありません</div>`}
+      </div>
+      <div class="source-pane" id="source-desc">
+        ${descText
+          ? `<div class="source-text">${escHtml(descText)}</div>`
+          : `<div class="source-empty">データがありません</div>`}
+      </div>
+    </div>`;
+}
+
+function switchSourceTab(btn) {
+  const panel = btn.closest(".source-panel");
+  const scrollEl = panel.closest(".compare-right");
+
+  // 現在のタブのスクロール位置を保存
+  const currentBtn = panel.querySelector(".source-tab-btn.active");
+  if (currentBtn && scrollEl) {
+    sourceScroll[currentBtn.dataset.mode] = scrollEl.scrollTop;
+  }
+
+  panel.querySelectorAll(".source-tab-btn").forEach(b => b.classList.remove("active"));
+  panel.querySelectorAll(".source-pane").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  const targetId = "source-" + btn.dataset.mode;
+  const pane = document.getElementById(targetId);
+  if (pane) pane.classList.add("active");
+
+  // 切り替え先タブのスクロール位置を復元
+  if (scrollEl) scrollEl.scrollTop = sourceScroll[btn.dataset.mode] || 0;
+}
+
+function switchViewMode(mode) {
+  state.viewMode = mode;
+  const content = document.querySelector(".detail-content");
+  if (content) content.dataset.viewMode = mode;
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  const detail = document.getElementById("detail");
+  if (detail) detail.classList.toggle("detail-compare-mode", mode === "compare");
 }
 
 function renderAnalysisSection(patent) {
