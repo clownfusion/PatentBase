@@ -265,15 +265,102 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
   border: 1px solid #c4b5fd;
   border-radius: var(--radius-lg);
   padding: 24px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
 }
-.analysis-analyzing p { color: var(--c-analyzing); font-weight: 500; }
-.analysis-analyzing small { color: var(--c-text-muted); font-size: 12px; }
+
+/* 進捗カード */
+.progress-card { display: flex; flex-direction: column; gap: 14px; }
+.progress-header { display: flex; align-items: center; gap: 10px; }
+.progress-title { font-weight: 700; font-size: 16px; color: var(--c-analyzing); }
+
+/* ステップインジケーター */
+.progress-steps { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.progress-step {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--c-border);
+  color: var(--c-text-muted);
+  background: var(--c-bg);
+}
+.progress-step.done { border-color: #22c55e; color: #16a34a; background: #f0fdf4; }
+.progress-step.active { border-color: var(--c-primary); color: var(--c-primary); background: var(--c-primary-light); font-weight: 600; }
+.progress-step-arrow { color: var(--c-border-strong); font-size: 14px; }
+
+/* 進捗バー */
+.progress-bar-wrapper {
+  height: 8px;
+  background: #e9ecef;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--c-primary), #818cf8);
+  border-radius: 999px;
+  transition: width 0.8s ease;
+}
+
+/* 時間表示 */
+.progress-time-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--c-text-muted);
+}
+.progress-time-row strong { color: var(--c-text); font-size: 14px; }
+.progress-remaining { color: var(--c-analyzing); }
+.progress-note { font-size: 12px; color: var(--c-text-muted); margin: 0; }
 
 /* Summary */
-.summary-text { font-size: 15px; line-height: 1.7; color: var(--c-text); }
+.summary-text { font-size: 14px; line-height: 1.7; color: var(--c-text); }
+.summary-card-body { padding: 0 !important; }
+.summary-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.summary-table tr { border-bottom: 1px solid var(--c-border); }
+.summary-table tr:last-child { border-bottom: none; }
+.summary-label-cell {
+  font-weight: 700;
+  color: var(--c-primary);
+  padding: 10px 12px 10px 16px;
+  white-space: nowrap;
+  vertical-align: top;
+  width: 70px;
+}
+.summary-value-cell {
+  padding: 10px 16px 10px 4px;
+  line-height: 1.7;
+  color: var(--c-text);
+  vertical-align: top;
+}
+.summary-label-note {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--c-text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+/* 手段セル内の請求項バッジリスト */
+.summary-claim-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--c-border);
+}
+.summary-claim-item:last-child { border-bottom: none; }
+.summary-claim-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-primary);
+  background: var(--c-primary-light);
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.summary-claim-text { font-size: 14px; line-height: 1.6; color: var(--c-text); }
 
 /* Key points */
 .key-points-list { list-style: none; }
@@ -326,6 +413,104 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
   font-weight: 500;
 }
 .claim-comp .id { font-weight: 700; margin-right: 3px; }
+
+/* claim-components-table (新形式: original/plain 対応表) */
+.claim-components-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.claim-components-table th,
+.claim-components-table td {
+  border: 1px solid var(--c-border);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.5;
+}
+.claim-components-table th {
+  background: #f4f5f7;
+  font-weight: 600;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+.claim-components-table .comp-id {
+  font-weight: 700;
+  color: var(--c-primary);
+  white-space: nowrap;
+  width: 2em;
+  text-align: center;
+}
+.claim-components-table .comp-original { color: var(--c-text); }
+.claim-components-table .comp-plain { color: var(--c-text-muted); }
+
+/* key-points-text (文字列形式フォールバック) */
+.key-points-text { font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+
+/* kp-section: 【...】セクション形式 */
+.kp-card-body { padding: 0 !important; }
+.kp-section {
+  border-bottom: 1px solid var(--c-border);
+}
+.kp-section:last-child { border-bottom: none; }
+.kp-section-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-primary);
+  background: var(--c-primary-light);
+  padding: 7px 16px;
+  border-bottom: 1px solid #dbeafe;
+}
+.kp-section-body {
+  list-style: none;
+  margin: 0;
+  padding: 8px 16px 10px 16px;
+}
+.kp-section-body li {
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 4px 0 4px 18px;
+  position: relative;
+  color: var(--c-text);
+}
+.kp-section-body li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-primary);
+  opacity: 0.6;
+}
+
+/* ラベル：内容 形式 — 全行ラベル付きセクションはテーブルで文頭揃え */
+.kp-labeled-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kp-label-cell { padding: 5px 8px 5px 12px; vertical-align: top; white-space: nowrap; width: 1%; }
+.kp-content-cell { padding: 5px 16px 5px 0; vertical-align: top; line-height: 1.6; color: var(--c-text); }
+
+/* 混在セクション用フレックスリスト */
+.kp-labeled-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0 5px 0 !important;
+}
+.kp-labeled-item::before { display: none !important; }
+.kp-label-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7c3aed;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 4px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.kp-label-content { font-size: 13px; line-height: 1.6; color: var(--c-text); }
 
 /* Mermaid */
 #mermaid-container {

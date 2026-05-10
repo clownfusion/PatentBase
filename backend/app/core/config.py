@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # Claude API
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-sonnet-4-latest"
 
     # AI プロバイダー選択: "auto" | "api" | "claude_code"
     # auto: ANTHROPIC_API_KEY があれば API 優先、なければ Claude Code CLI

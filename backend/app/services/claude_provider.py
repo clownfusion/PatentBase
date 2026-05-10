@@ -64,13 +64,17 @@ class ClaudeProvider(AIProvider):
 
         system_prompt = (
             input.system_prompt
-            or "あなたは特許の専門家（弁理士レベルの知識を持つ分析者）です。"
-               "正確で実務的な日本語で回答してください。"
+            or "あなたは特許文書をエンジニア向けに説明するアナリストです。"
+               "読み手は技術者ですが特許の専門用語には不慣れです。"
+               "技術的な正確さと権利範囲の把握に必要な情報は保ちつつ、"
+               "明細書特有の硬い表現（「〜を特徴とする」「〜に係る」等）は"
+               "平易な日本語に言い換えてください。"
         )
 
         response = await client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=8096,
+            max_tokens=16000,
+            temperature=0,
             system=system_prompt,
             messages=[{"role": "user", "content": content}],
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},

@@ -1,4 +1,5 @@
 """特許の登録・取得・削除エンドポイント。"""
+import json
 import uuid
 from pathlib import Path
 from typing import List
@@ -212,6 +213,21 @@ def _create_patent_record(db: Session, source: str, claims_text: str = "",
     return patent
 
 
+def _parse_key_points(raw: str | None):
+    """DB に JSON 文字列で保存された key_points を Python 値に変換する。
+
+    - 配列: list[str] をそのまま返す（旧形式）
+    - 文字列: str を返す（新形式: 【...】セクション付きテキスト）
+    - None / パース失敗: [] を返す
+    """
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+
 def _patent_to_dict(p: Patent) -> dict:
     return {
         "id": p.id,
@@ -226,7 +242,7 @@ def _patent_to_dict(p: Patent) -> dict:
         "claims_text": p.claims_text,
         "description_text": p.description_text,
         "summary": p.summary,
-        "key_points": p.key_points,
+        "key_points": _parse_key_points(p.key_points),
         "claims_structured": p.claims_structured,
         "mermaid_diagram": p.mermaid_diagram,
         "drawio_xml": p.drawio_xml,

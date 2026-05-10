@@ -6,6 +6,9 @@ const state = {
   patents: [],
   selectedId: null,
   pollingTimer: null,
+  progressTimer: null,
+  analysisStartTime: null,
+  pollingPatentId: null,   // どの特許をポーリング中か（タブ切り替え後の再開判定）
   selectMode: false,
   selectedIds: new Set(),
   viewMode: "analysis",
@@ -446,10 +449,26 @@ function renderAnalysisSection(patent) {
 
   if (status === "analyzing") {
     return `<div class="analysis-analyzing">
-      <div class="spinner"></div>
-      <div>
-        <p>分析中です...</p>
-        <small>Claude API が特許を解析しています。しばらくお待ちください。</small>
+      <div class="progress-card">
+        <div class="progress-header">
+          <div class="spinner" style="width:20px;height:20px;border-width:3px;flex-shrink:0"></div>
+          <span class="progress-title">AI 分析中</span>
+        </div>
+        <div class="progress-steps">
+          <span class="progress-step done">✓ テキスト送信</span>
+          <span class="progress-step-arrow">→</span>
+          <span class="progress-step active">⟳ Claude 解析中</span>
+          <span class="progress-step-arrow">→</span>
+          <span class="progress-step pending">構造化・保存</span>
+        </div>
+        <div class="progress-bar-wrapper">
+          <div id="analysis-progress-bar" class="progress-bar-fill" style="width:0%"></div>
+        </div>
+        <div class="progress-time-row">
+          <span>経過時間：<strong id="analysis-elapsed-time">0:00</strong></span>
+          <span id="analysis-remaining-time" class="progress-remaining">推定残り 2:00</span>
+        </div>
+        <p class="progress-note">分析はサーバー側で実行中です。他の特許を確認してから戻っても、経過時間・分析結果はそのまま表示されます。</p>
       </div>
     </div>`;
   }
@@ -463,29 +482,25 @@ function renderAnalysisSection(patent) {
   }
 
   if (status === "done") {
-    const keyPoints = (() => {
-      try { return JSON.parse(patent.key_points || "[]"); } catch { return []; }
-    })();
     const claims = patent.claims_structured || [];
+    const kpHtml = renderKeyPoints(patent.key_points);
 
     return `
       <!-- サマリー -->
       ${patent.summary ? `
       <div class="card">
         <div class="card-header"><h3>📝 発明の概要</h3></div>
-        <div class="card-body">
-          <div class="summary-text">${escHtml(patent.summary)}</div>
+        <div class="card-body summary-card-body">
+          ${renderSummaryText(patent.summary)}
         </div>
       </div>` : ""}
 
       <!-- 権利化ポイント -->
-      ${keyPoints.length ? `
+      ${kpHtml ? `
       <div class="card">
         <div class="card-header"><h3>🎯 権利化ポイント</h3></div>
-        <div class="card-body" style="padding-top:8px;padding-bottom:8px">
-          <ul class="key-points-list">
-            ${keyPoints.map(kp => `<li>${escHtml(kp)}</li>`).join("")}
-          </ul>
+        <div class="card-body kp-card-body">
+          ${kpHtml}
         </div>
       </div>` : ""}
 
@@ -532,13 +547,22 @@ function renderClaimCard(c) {
         ${c.summary ? `<span class="claim-summary">— ${escHtml(c.summary)}</span>` : ""}
       </div>
       <div class="claim-body">
-        ${c.text ? `<div class="claim-text">${escHtml(c.text).substring(0, 200)}${c.text.length > 200 ? "…" : ""}</div>` : ""}
+        ${c.text ? `<div class="claim-text">${escHtml(c.text).replace(/\n/g, "<br>")}</div>` : ""}
         ${components.length ? `
-          <div class="claim-components">
-            ${components.map(comp => `
-              <span class="claim-comp"><span class="id">${escHtml(comp.id)}.</span>${escHtml(comp.description)}</span>
-            `).join("")}
-          </div>` : ""}
+          <table class="claim-components-table">
+            <thead>
+              <tr><th>構成</th><th>請求項の表現</th><th>平易な説明</th></tr>
+            </thead>
+            <tbody>
+              ${components.map(comp => `
+                <tr>
+                  <td class="comp-id">${escHtml(comp.id)}</td>
+                  <td class="comp-original">${escHtml(comp.original || comp.description || "")}</td>
+                  <td class="comp-plain">${escHtml(comp.plain || "")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>` : ""}
       </div>
     </div>`;
 }
@@ -764,11 +788,14 @@ async function renderMermaid(code) {
 
 // ─── AI Analysis ──────────────────────────────────────────────────────────
 async function runAnalysis(patentId) {
+  // 新規分析開始 → 前回の経過時間をリセット（同じ特許の再分析も含む）
+  state.pollingPatentId = null;
+  state.analysisStartTime = null;
   const btn = document.getElementById("btn-analyze");
   if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner-sm spinner" style="display:inline-block;width:14px;height:14px;border-width:2px;border-color:rgba(255,255,255,.3);border-top-color:#fff"></span> 開始中...`; }
   try {
     await api("POST", `/analyze/${patentId}`);
-    toast("AI 分析が完了しました", "success");
+    // POST は即座に返る。selectPatent で "analyzing" 状態を描画 → startPolling が走る
     await selectPatent(patentId);
   } catch (e) {
     if (e.message.includes("503") || e.message.includes("API キー")) {
@@ -776,32 +803,213 @@ async function runAnalysis(patentId) {
     } else {
       toast("分析中にエラーが発生しました: " + e.message, "error");
     }
-    // Refresh to show error state
     await loadPatents();
     if (state.selectedId === patentId) await selectPatent(patentId);
   }
 }
 
 function startPolling(patentId) {
+  // 同じ特許に戻った場合は analysisStartTime を引き継ぐ（タブ切り替え対応）
+  const resuming = state.pollingPatentId === patentId && state.analysisStartTime !== null;
   stopPolling();
+  state.pollingPatentId = patentId;
+  if (!resuming) state.analysisStartTime = Date.now();
+
+  // 1秒ごとに経過時間・進捗バーを更新（描画直後に即時呼び出しで 0:00 フラッシュを防ぐ）
+  updateProgressUI();
+  state.progressTimer = setInterval(() => updateProgressUI(), 1000);
+
+  // 2秒ごとに完了チェック
   state.pollingTimer = setInterval(async () => {
     try {
       const patent = await api("GET", `/patents/${patentId}`);
       if (patent.analysis_status !== "analyzing") {
-        stopPolling();
+        stopPolling(true);  // 完了 → タイマー状態をクリア
         renderDetail(patent);
         if (patent.analysis_status === "done") toast("AI 分析が完了しました", "success");
         if (patent.analysis_status === "error") toast("分析中にエラーが発生しました", "error");
         await loadPatents();
       }
     } catch (e) {
-      stopPolling();
+      stopPolling(true);
     }
-  }, 3000);
+  }, 2000);
 }
 
-function stopPolling() {
+function stopPolling(clearState = false) {
   if (state.pollingTimer) { clearInterval(state.pollingTimer); state.pollingTimer = null; }
+  if (state.progressTimer) { clearInterval(state.progressTimer); state.progressTimer = null; }
+  if (clearState) {
+    // 完了・エラー時のみリセット（ナビゲーション離脱時は引き継ぐため残す）
+    state.analysisStartTime = null;
+    state.pollingPatentId = null;
+  }
+}
+
+function updateProgressUI() {
+  if (!state.analysisStartTime) return;
+  const elapsed = Math.floor((Date.now() - state.analysisStartTime) / 1000);
+  const estimatedTotal = 120;
+  const pct = Math.min(Math.floor((elapsed / estimatedTotal) * 95), 95);
+
+  const elapsedEl = document.getElementById("analysis-elapsed-time");
+  const barEl = document.getElementById("analysis-progress-bar");
+  const remainingEl = document.getElementById("analysis-remaining-time");
+
+  if (elapsedEl) elapsedEl.textContent = formatTime(elapsed);
+  if (barEl) barEl.style.width = pct + "%";
+  if (remainingEl) {
+    const remaining = Math.max(0, estimatedTotal - elapsed);
+    remainingEl.textContent = elapsed < estimatedTotal
+      ? `推定残り ${formatTime(remaining)}`
+      : "もうすぐ完了します...";
+  }
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ─── Key Points rendering ─────────────────────────────────────────────────
+
+function _normalizeText(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  return raw
+    .replace(/\\n/g, "\n")   // リテラル \n (バックスラッシュ+n) → 実際の改行
+    .replace(/^["'\s]+/, "") // 先頭の " や空白（ダブルエンコード残骸）を除去
+    .replace(/["'\s]+$/, "") // 末尾の " や空白を除去
+    .trim();
+}
+
+function renderKeyPoints(rawKeyPoints) {
+  if (!rawKeyPoints) return "";
+
+  // 配列形式（旧フォーマット）
+  if (Array.isArray(rawKeyPoints)) {
+    if (!rawKeyPoints.length) return "";
+    return `<ul class="key-points-list">${rawKeyPoints.map(kp => `<li>${escHtml(kp)}</li>`).join("")}</ul>`;
+  }
+
+  // 文字列形式（新フォーマット: 【...】セクション）
+  if (typeof rawKeyPoints === "string") {
+    const str = _normalizeText(rawKeyPoints);
+    if (!str) return "";
+    const sections = parseKpSections(str);
+    if (sections.length) {
+      return sections.map(renderKpSection).join("");
+    }
+    return `<div class="key-points-text">${escHtml(str).replace(/\n/g, "<br>")}</div>`;
+  }
+
+  return "";
+}
+
+function parseKpSections(text) {
+  const sections = [];
+  const parts = text.split(/(?=【[^】]*】)/);
+  for (const part of parts) {
+    const m = part.match(/^【([^】]*)】\s*([\s\S]*)/);
+    if (m) {
+      sections.push({ header: m[1].trim(), body: m[2].trim() });
+    } else if (part.trim()) {
+      sections.push({ header: "", body: part.trim() });
+    }
+  }
+  return sections;
+}
+
+function _parseKpLine(line) {
+  const clean = line.replace(/^\\n/, "").replace(/^[・•\-]\s*/, "");
+  if (!clean) return null;
+  const m = clean.match(/^([^：:]{1,20})[：:]\s*(.+)/);
+  if (m && m[2].trim()) return { type: "labeled", label: m[1].trim(), content: m[2].trim() };
+  return { type: "plain", content: clean };
+}
+
+function renderKpSection(sec) {
+  const lines = sec.body.split(/\n+/).filter(l => l.trim());
+  const parsed = lines.map(_parseKpLine).filter(Boolean);
+  if (!parsed.length) return "";
+
+  let bodyHtml;
+  if (parsed.every(l => l.type === "labeled")) {
+    // 全行ラベル付き → テーブルで文頭揃え
+    const rows = parsed.map(l => `<tr>
+      <td class="kp-label-cell"><span class="kp-label-badge">${escHtml(l.label)}</span></td>
+      <td class="kp-content-cell">${escHtml(l.content)}</td>
+    </tr>`).join("");
+    bodyHtml = `<table class="kp-labeled-table">${rows}</table>`;
+  } else {
+    // 混在 → リスト
+    const items = parsed.map(l =>
+      l.type === "labeled"
+        ? `<li class="kp-labeled-item"><span class="kp-label-badge">${escHtml(l.label)}</span><span class="kp-label-content">${escHtml(l.content)}</span></li>`
+        : `<li>${escHtml(l.content)}</li>`
+    ).join("");
+    bodyHtml = `<ul class="kp-section-body">${items}</ul>`;
+  }
+
+  return `
+    <div class="kp-section">
+      ${sec.header ? `<div class="kp-section-header">${escHtml(sec.header)}</div>` : ""}
+      ${bodyHtml}
+    </div>`;
+}
+
+// ─── Summary rendering ────────────────────────────────────────────────────
+
+function renderSummaryValue(value) {
+  // （請求項N）パターンを含む場合はバッジ付きリストに分割
+  if (/（請求項\d+）/.test(value)) {
+    const parts = value.split(/(?=（請求項\d+）)/).filter(p => p.trim());
+    return parts.map(part => {
+      const m = part.match(/^（請求項(\d+)）\s*([\s\S]*)/);
+      if (m) {
+        return `<div class="summary-claim-item">
+          <span class="summary-claim-badge">請求項${escHtml(m[1])}</span>
+          <span class="summary-claim-text">${escHtml(m[2].trim())}</span>
+        </div>`;
+      }
+      return `<div class="summary-claim-item"><span class="summary-claim-text">${escHtml(part.trim())}</span></div>`;
+    }).join("");
+  }
+  return escHtml(value);
+}
+
+function renderSummaryText(raw) {
+  if (!raw) return "";
+  const text = _normalizeText(raw);
+  if (!text) return "";
+
+  const lines = text.split(/\n+/).filter(l => l.trim());
+  if (!lines.length) return "";
+
+  // ・label：value 形式（発明の概要の5項目）を2列テーブルで表示
+  const hasLabels = lines.some(l => /^[・•]?\s*[^\s：:]+[：:]/.test(l));
+  if (hasLabels) {
+    const rows = lines.map(line => {
+      const clean = line.replace(/^[・•]\s*/, "");
+      const m = clean.match(/^([^：:]+)[：:]\s*([\s\S]*)/);
+      if (m) {
+        const label = m[1].trim();
+        const value = m[2].trim();
+        const hasClaimRefs = /（請求項\d+）/.test(value);
+        const labelHtml = hasClaimRefs
+          ? `${escHtml(label)}<span class="summary-label-note">独立項のみ</span>`
+          : escHtml(label);
+        return `<tr>
+          <td class="summary-label-cell">${labelHtml}</td>
+          <td class="summary-value-cell">${renderSummaryValue(value)}</td>
+        </tr>`;
+      }
+      return `<tr><td colspan="2" class="summary-value-cell">${escHtml(clean)}</td></tr>`;
+    }).join("");
+    return `<table class="summary-table">${rows}</table>`;
+  }
+
+  return `<div class="summary-text">${escHtml(text).replace(/\n/g, "<br>")}</div>`;
 }
 
 // ─── Registration Modal ───────────────────────────────────────────────────

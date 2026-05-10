@@ -1,85 +1,87 @@
 """AI 分析の実行エンドポイント。"""
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from backend.app.core.database import get_db
+from backend.app.core.database import get_db, SessionLocal
 from backend.app.models.patent import Patent
 from backend.app.services import ai_analyzer
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
 
 
-@router.post("/{patent_id}")
-async def analyze_patent(patent_id: str, db: Session = Depends(get_db)):
-    """登録済み特許の AI 分析を実行する。
+def _build_biblio_text(patent: Patent) -> str:
+    parts = []
+    if patent.title:
+        parts.append(f"発明の名称: {patent.title}")
+    if patent.applicant:
+        parts.append(f"出願人: {patent.applicant}")
+    if patent.ipc_codes:
+        parts.append(f"IPC: {patent.ipc_codes}")
+    return "\n".join(parts)
 
-    書誌情報・要約・請求項・詳細説明を結合して Claude API に送信し、
-    以下を生成して DB に保存する:
-    - summary: 発明の概要 3〜5文
-    - key_points: 権利化ポイントリスト
-    - claims_structured: 構造化請求項
-    - mermaid_diagram: Mermaid フロー図
-    - drawio_xml: Draw.io XML
+
+@router.post("/{patent_id}")
+async def analyze_patent(
+    patent_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """登録済み特許の AI 分析をバックグラウンドで開始する。
+
+    即座に {"analysis_status": "analyzing"} を返す。
+    フロントエンドは GET /patents/{id} をポーリングして完了を検知する。
     """
     patent = db.query(Patent).filter(Patent.id == patent_id).first()
     if not patent:
         raise HTTPException(status_code=404, detail="Patent not found")
 
-    # 分析可能なテキストがあるか確認
     has_text = any([patent.abstract, patent.claims_text, patent.description_text])
     if not has_text:
         raise HTTPException(status_code=400, detail="分析可能なテキストデータがありません。")
 
+    if patent.analysis_status == "analyzing":
+        return {"id": patent_id, "analysis_status": "analyzing"}
+
+    # テキストを事前に構築（background task では DB セッションが無効なため）
+    biblio_text = _build_biblio_text(patent)
+    full_text = ai_analyzer.compose_patent_text(
+        biblio_text=biblio_text,
+        abstract_text=patent.abstract or "",
+        claims_text=patent.claims_text or "",
+        description_text=patent.description_text or "",
+    )
+
     patent.analysis_status = "analyzing"
     db.commit()
 
+    background_tasks.add_task(_run_analysis_task, patent_id, full_text)
+    return {"id": patent_id, "analysis_status": "analyzing"}
+
+
+async def _run_analysis_task(patent_id: str, full_text: str) -> None:
+    """バックグラウンドで AI 分析を実行し DB に保存する。"""
+    db = SessionLocal()
     try:
-        # 書誌・要約・請求項・詳細説明を結合
-        biblio_parts = []
-        if patent.title:
-            biblio_parts.append(f"発明の名称: {patent.title}")
-        if patent.applicant:
-            biblio_parts.append(f"出願人: {patent.applicant}")
-        if patent.ipc_codes:
-            biblio_parts.append(f"IPC: {patent.ipc_codes}")
-        biblio_text = "\n".join(biblio_parts)
-
-        full_text = ai_analyzer.compose_patent_text(
-            biblio_text=biblio_text,
-            abstract_text=patent.abstract or "",
-            claims_text=patent.claims_text or "",
-            description_text=patent.description_text or "",
-        )
-
         result = await ai_analyzer.analyze_patent(text=full_text)
 
-        patent.summary = result.get("summary", "")
-        patent.key_points = json.dumps(result.get("key_points", []), ensure_ascii=False)
-        patent.claims_structured = result.get("claims_structured")
-        patent.mermaid_diagram = result.get("mermaid_diagram", "")
-        patent.drawio_xml = result.get("drawio_xml", "")
-        patent.analysis_status = "done"
-
-    except RuntimeError as e:
-        # Claude API が利用不可
-        patent.analysis_status = "error"
-        db.commit()
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        patent.analysis_status = "error"
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"分析中にエラーが発生しました: {e}")
-
-    db.commit()
-    db.refresh(patent)
-    return {
-        "id": patent.id,
-        "patent_number": patent.patent_number,
-        "title": patent.title,
-        "summary": patent.summary,
-        "key_points": json.loads(patent.key_points or "[]"),
-        "claims_structured": patent.claims_structured,
-        "mermaid_diagram": patent.mermaid_diagram,
-        "drawio_xml": patent.drawio_xml,
-        "analysis_status": patent.analysis_status,
-    }
+        patent = db.query(Patent).filter(Patent.id == patent_id).first()
+        if patent:
+            patent.summary = result.get("summary", "")
+            patent.key_points = json.dumps(
+                result.get("key_points", []), ensure_ascii=False
+            )
+            patent.claims_structured = result.get("claims_structured")
+            patent.mermaid_diagram = result.get("mermaid_diagram", "")
+            patent.drawio_xml = result.get("drawio_xml", "")
+            patent.analysis_status = "done"
+            db.commit()
+    except Exception:
+        try:
+            patent = db.query(Patent).filter(Patent.id == patent_id).first()
+            if patent:
+                patent.analysis_status = "error"
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
