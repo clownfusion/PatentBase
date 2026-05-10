@@ -22,6 +22,12 @@ import logging
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setLevel(logging.DEBUG)
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 # ========== データクラス ==========
 
@@ -56,6 +62,7 @@ class PatentBiblio:
     isn: str = ""
     hash_value: str = ""
     docu_key_jpa: str = ""       # "JPA 502060350" 形式
+    family_info: dict = field(default_factory=dict)  # OPD ファミリー情報
 
 
 @dataclass
@@ -181,6 +188,341 @@ def _extract_progress_table(prog_page) -> str:
         logger.warning(f"経過テーブル解析エラー → フォールバック: {e}")
         body_text = prog_page.inner_text("body")
         return body_text[:8000] if body_text else ""
+
+
+# ========== OPD ファミリー情報取得 ==========
+
+def _scrape_opd_info(context, page) -> dict:
+    """検索結果ページの OPD ボタンからファミリー情報を取得する。
+
+    Returns:
+        {"source": "jplatpat", "families": [...], "document_sections": [...]}
+        取得失敗時は {}
+    """
+    try:
+        # OPD ボタンを探す（各種機能列）
+        opd_btn = page.locator("a[id*='_opd0']")
+        logger.info(f"OPD ボタン検索 [a[id*='_opd0']]: {opd_btn.count()} 件")
+        if opd_btn.count() == 0:
+            opd_btn = page.locator("a[id*='_opdRef']")
+            logger.info(f"OPD ボタン検索 [a[id*='_opdRef']]: {opd_btn.count()} 件")
+        if opd_btn.count() == 0:
+            opd_btn = page.locator("a:has-text('OPD'), button:has-text('OPD')")
+            logger.info(f"OPD ボタン検索 [text=OPD]: {opd_btn.count()} 件")
+        if opd_btn.count() == 0:
+            logger.warning("OPD ボタンが見つかりません。ファミリー情報をスキップします。")
+            return {}
+
+        # OPD ボタンの href を記録しておく
+        opd_href = opd_btn.first.get_attribute("href") or ""
+        logger.info(f"OPD ボタン href: {opd_href!r}")
+
+        logger.info("OPD ボタンをクリック、新タブ待機中...")
+        with context.expect_page(timeout=15000) as opd_page_info:
+            opd_btn.first.click()
+        opd_page = opd_page_info.value
+
+        try:
+            # domcontentloaded でリダイレクト先 URL を確認
+            opd_page.wait_for_load_state("domcontentloaded", timeout=15000)
+            initial_url = opd_page.url
+            logger.info(f"OPD 初期 URL: {initial_url}")
+
+            # /?uri=/h0200 や mainte.html にリダイレクトされた場合は /h0200 へ直接ナビゲート
+            # （Playwright が開くタブは Angular ルーターの遷移が正しく行われないケースがある）
+            if "mainte" in initial_url or "?uri=" in initial_url:
+                logger.info("OPD URL が不正なため /h0200 へ直接ナビゲートします")
+                opd_page.goto(
+                    "https://www.j-platpat.inpit.go.jp/h0200",
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                logger.info(f"再ナビゲート後 URL: {opd_page.url}")
+            else:
+                logger.info(f"OPD タブ URL: {initial_url}")
+
+            opd_page.wait_for_load_state("networkidle", timeout=30000)
+
+            # Angular の非同期描画を待つ: 任意の <table> が出現するまで最大 30 秒
+            try:
+                opd_page.wait_for_selector("table", timeout=30000)
+                logger.info("OPD ページ: テーブル要素を確認")
+            except Exception:
+                logger.warning("OPD ページ: 30秒待ってもテーブルが出現しません")
+                logger.warning(f"  URL: {opd_page.url}")
+                return {}
+
+            # ファミリーテーブルの全行が描画されるまで追加待機
+            expected_count = opd_page.evaluate("""() => {
+                const t = document.getElementById('h0200_lblLnquiryConditionTable');
+                if (!t) return 0;
+                const cells = Array.from(t.querySelectorAll('td'));
+                for (const c of cells) {
+                    const n = parseInt((c.innerText || c.textContent || '').trim());
+                    if (!isNaN(n) && n > 0) return n;
+                }
+                return 0;
+            }""")
+            logger.info(f"OPD 期待ファミリー件数: {expected_count}")
+
+            if expected_count > 0:
+                try:
+                    opd_page.wait_for_function(
+                        f"""() => {{
+                            const t = document.getElementById('familyInfoTableArea');
+                            return t && t.querySelectorAll('tbody tr').length >= {expected_count};
+                        }}""",
+                        timeout=15000,
+                    )
+                    logger.info(f"wait_for_function 完了: tbody tr >= {expected_count}")
+                    opd_page.wait_for_timeout(500)
+                except Exception as wf_err:
+                    logger.warning(f"wait_for_function タイムアウト: {wf_err} → 追加待機 2秒")
+                    opd_page.wait_for_timeout(2000)
+            else:
+                opd_page.wait_for_timeout(1000)
+
+            # 現在の tbody tr 件数をログ出力
+            actual_count = opd_page.evaluate("""() => {
+                const t = document.getElementById('familyInfoTableArea');
+                return t ? t.querySelectorAll('tbody tr').length : -1;
+            }""")
+            logger.info(f"familyInfoTableArea tbody tr 実際の件数: {actual_count}")
+
+            families = _extract_family_list(opd_page)
+            logger.info(f"OPD ファミリー抽出件数: {len(families)} 件")
+
+            doc_sections = []
+            # 「書類情報を全て開く」は <span> 要素として実装されている
+            open_all_btn = opd_page.locator("button:has-text('書類情報を全て開く'), span:has-text('書類情報を全て開く')")
+            logger.info(f"「書類情報を全て開く」ボタン: {open_all_btn.count()} 件")
+            if open_all_btn.count() > 0:
+                open_all_btn.first.click()
+                opd_page.wait_for_timeout(1000)
+                # 全ファミリー分のセクションが展開されるまで待つ
+                if families:
+                    last_idx = len(families) - 1
+                    try:
+                        opd_page.wait_for_function(
+                            f"() => !!document.getElementById('h0200_docInfoTableArea{last_idx}')",
+                            timeout=10000,
+                        )
+                        logger.info(f"全書類セクション展開確認 (最終 index={last_idx})")
+                    except Exception:
+                        logger.warning(f"書類セクション展開タイムアウト → 追加待機 3秒")
+                        opd_page.wait_for_timeout(3000)
+                try:
+                    opd_page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                doc_sections = _extract_document_sections(opd_page, families)
+                logger.info(f"書類セクション抽出件数: {len(doc_sections)} 件")
+
+            return {
+                "source": "jplatpat",
+                "families": families,
+                "document_sections": doc_sections,
+            }
+        finally:
+            opd_page.close()
+
+    except Exception as e:
+        logger.warning(f"OPD ファミリー情報取得エラー: {e}", exc_info=True)
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+        return {}
+
+
+def _extract_family_list(opd_page) -> list:
+    """OPD ページのファミリー一覧テーブルを JavaScript で抽出する。
+
+    Playwright の strict mode 回避のため page.evaluate() を使用する。
+    """
+    try:
+        result = opd_page.evaluate("""() => {
+            function extractTable(tbl) {
+                // ヘッダー: thead > tr、なければ table 直下の最初の tr
+                const headerRow = tbl.querySelector('thead tr') || tbl.querySelector('tr');
+                if (!headerRow) return null;
+                const headers = Array.from(headerRow.querySelectorAll('th, td'))
+                    .map(c => (c.innerText || c.textContent || '').trim());
+
+                // データ行: 全 tbody の tr を取得（Angular は行ごとに <tbody> を作ることがある）
+                const allBodyRows = Array.from(tbl.querySelectorAll('tbody tr'));
+                const dataRows = allBodyRows.length > 0
+                    ? allBodyRows
+                    : Array.from(tbl.querySelectorAll('tr')).slice(1);
+
+                const rows = dataRows
+                    .map(tr => Array.from(tr.querySelectorAll('td'))
+                        .map(c => (c.innerText || c.textContent || '').trim()))
+                    .filter(r => r.length >= 3);
+
+                return { headers, rows };
+            }
+
+            // 1. familyInfoTableArea を優先
+            let mainTable = document.getElementById('familyInfoTableArea');
+            if (mainTable) {
+                const res = extractTable(mainTable);
+                if (res && res.rows.length > 0) return res;
+            }
+
+            // 2. ページ上の全テーブルを調べ、ファミリー情報らしいものを探す
+            const FAMILY_KEYWORDS = ['出願番号', '公開番号', '登録番号'];
+            const allTables = Array.from(document.querySelectorAll('table'));
+
+            // デバッグ用: テーブル一覧をログとして返す
+            const tableInfo = allTables.map((t, i) => {
+                const hdr = t.querySelector('thead tr') || t.querySelector('tr');
+                return {
+                    index: i,
+                    id: t.id,
+                    className: t.className.substring(0, 60),
+                    rowCount: t.querySelectorAll('tr').length,
+                    headerText: hdr ? (hdr.innerText || hdr.textContent || '').substring(0, 80).trim() : ''
+                };
+            });
+
+            // ファミリーキーワードを2つ以上含むテーブルを選ぶ
+            for (const t of allTables) {
+                const text = t.textContent || '';
+                const matchCount = FAMILY_KEYWORDS.filter(k => text.includes(k)).length;
+                if (matchCount >= 2) {
+                    const res = extractTable(t);
+                    if (res && res.rows.length > 0) return { ...res, tableInfo };
+                }
+            }
+
+            // 見つからない場合はデバッグ情報だけ返す
+            return { headers: [], rows: [], tableInfo };
+        }""")
+
+        if not result:
+            logger.warning("_extract_family_list: JS evaluate が null を返しました")
+            return []
+
+        # ページ上のテーブル一覧をログ出力（診断用）
+        table_info = result.get("tableInfo")
+        if table_info is not None:
+            logger.info(f"OPD ページ上のテーブル一覧 ({len(table_info)} 件):")
+            for ti in table_info:
+                logger.info(f"  [{ti.get('index')}] id={ti.get('id')!r} rows={ti.get('rowCount')} header={ti.get('headerText')!r}")
+
+        headers = result.get("headers", [])
+        raw_rows = result.get("rows", [])
+        logger.info(f"_extract_family_list: headers={headers}, row数={len(raw_rows)}")
+        if raw_rows:
+            logger.info(f"  先頭行サンプル: {raw_rows[0]}")
+
+        families = []
+        for row_data in raw_rows:
+            family: dict = {}
+            for j, h in enumerate(headers):
+                if j >= len(row_data):
+                    break
+                val = row_data[j]
+                if "国" in h or "地域" in h:
+                    family["country"] = val
+                elif "出願番号" in h:
+                    family["application_number"] = val
+                elif "出願日" in h:
+                    family["filing_date"] = val
+                elif "公開番号" in h:
+                    family["publication_number"] = val
+                elif "登録番号" in h:
+                    family["registration_number"] = val
+            if family:
+                families.append(family)
+
+        logger.info(f"ファミリー件数: {len(families)}")
+        return families
+
+    except Exception as e:
+        logger.warning(f"ファミリー一覧抽出エラー: {e}", exc_info=True)
+        return []
+
+
+def _extract_document_sections(opd_page, families: list) -> list:
+    """書類情報テーブル (h0200_docInfoTableArea0〜N) を JavaScript で抽出する。
+
+    各テーブルはインデックスでファミリーリストに対応する。
+    """
+    try:
+        raw = opd_page.evaluate("""() => {
+            const sections = [];
+            let i = 0;
+            while (true) {
+                const tbl = document.getElementById('h0200_docInfoTableArea' + i);
+                if (!tbl) break;
+
+                const hRow = tbl.querySelector('thead tr') || tbl.querySelector('tr');
+                const headers = hRow
+                    ? Array.from(hRow.querySelectorAll('th, td'))
+                        .map(c => (c.innerText || c.textContent || '').trim())
+                    : [];
+
+                // 行ごとに <tbody> が生成されるケースに対応
+                const allBodyRows = Array.from(tbl.querySelectorAll('tbody tr'));
+                const dataRows = allBodyRows.length > 0
+                    ? allBodyRows
+                    : Array.from(tbl.querySelectorAll('tr')).slice(1);
+
+                const rows = dataRows
+                    .map(tr => Array.from(tr.querySelectorAll('td'))
+                        .map(c => (c.innerText || c.textContent || '').trim()))
+                    .filter(r => r.length >= 2);
+
+                sections.push({ index: i, headers, rows });
+                i++;
+            }
+            return sections;
+        }""")
+
+        # 不要な列（ダウンロード・出力ボタン列）
+        EXCLUDE_COLS = {"PDFダウンロード", "書類出力"}
+
+        sections = []
+        for sec in raw:
+            idx = sec["index"]
+            label = f"書類情報 {idx + 1}"
+            if idx < len(families):
+                app_num = families[idx].get("application_number", "")
+                country = families[idx].get("country", "")
+                if app_num:
+                    label = f"{app_num} ({country})" if country else app_num
+
+            # ヘッダークリーニング: ■▲▼ とその前後の引用符を除去
+            clean_headers = [
+                re.sub(r'["“”「」]?[■▲▼]+["“”「」]?', '', h).strip()
+                for h in sec["headers"]
+            ]
+
+            # 不要列のインデックスを除外
+            keep = [i for i, h in enumerate(clean_headers) if h not in EXCLUDE_COLS]
+            filtered_headers = [clean_headers[i] for i in keep]
+            filtered_rows = [
+                [row[i] for i in keep if i < len(row)]
+                for row in sec["rows"]
+            ]
+            filtered_rows = [r for r in filtered_rows if any(r)]
+
+            if filtered_rows:
+                sections.append({
+                    "label": label,
+                    "headers": filtered_headers,
+                    "rows": filtered_rows,
+                })
+
+        logger.info(f"書類セクション数: {len(sections)}")
+        return sections
+
+    except Exception as e:
+        logger.warning(f"書類情報抽出エラー: {e}")
+        return []
 
 
 # ========== HTML → テキスト変換 ==========
@@ -511,6 +853,22 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
         except Exception:
             pass
 
+        # ---- ステップ4.8: OPD ファミリー情報取得 ----
+        family_info: dict = {}
+        try:
+            family_info = _scrape_opd_info(context, page)
+            logger.debug(f"ファミリー情報取得完了: {len(family_info.get('families', []))}件")
+        except Exception as e:
+            logger.warning(f"ファミリー情報取得エラー: {e}")
+
+        # 残存オーバーレイを再度クリア（OPD タブ閉鎖後）
+        try:
+            if page.locator(".cdk-overlay-backdrop").count() > 0:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+        except Exception:
+            pass
+
         # ---- ステップ5: 文献表示ページへ移動 ----
         # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
         # 登録番号リンク（特許公報B）が存在すればそちらを優先、なければ公開番号リンク（公開公報A）
@@ -621,6 +979,7 @@ def _scrape_patent_sync(context, query: str) -> PatentDocument:
             isn=isn,
             hash_value=hash_value,
             docu_key_jpa=docu_key_jpa,
+            family_info=family_info,
         )
 
         return PatentDocument(

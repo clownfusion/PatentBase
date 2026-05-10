@@ -61,6 +61,7 @@ async def register_from_number(
             "status": b.status,
             "progress_info": b.progress_info,
             "jplatpat_url": b.jplatpat_url,
+            "family_info": b.family_info,
         },
     )
     return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}
@@ -101,6 +102,7 @@ async def register_from_pdf(
             "app_number": b.get("app_number", ""),
             "filing_date": b.get("filing_date", ""),
             "publication_date": b.get("publication_date", ""),
+            "family_info": {"source": "unknown"},
         },
     )
     return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}
@@ -143,6 +145,7 @@ async def register_from_word(
             "app_number": b.get("app_number", ""),
             "filing_date": b.get("filing_date", ""),
             "publication_date": b.get("publication_date", ""),
+            "family_info": {"source": "unknown"},
         },
     )
     return {"id": patent.id, "patent_number": patent.patent_number, "title": patent.title}

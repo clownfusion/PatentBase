@@ -213,9 +213,12 @@ function statusBadge(status) {
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
-function sourceBadge(source) {
+function sourceBadge(source, url) {
   const map = { jplatpat: ["badge-jplatpat", "J-PlatPat"], pdf: ["badge-pdf", "PDF"], word: ["badge-word", "Word"] };
   const [cls, label] = map[source] || ["badge-pending", source];
+  if (url) {
+    return `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer" class="badge ${cls} detail-jplatpat-link">${label} ↗</a>`;
+  }
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
@@ -263,7 +266,7 @@ function renderDetail(patent) {
   sourceScroll.claims = 0;
   sourceScroll.desc = 0;
 
-  el.classList.toggle("detail-compare-mode", state.viewMode === "compare");
+  el.classList.toggle("detail-compare-mode", state.viewMode === "compare" || state.viewMode === "family");
 
   const analysisBtn = patent.analysis_status !== 'analyzing'
     ? `<button class="btn btn-primary" id="btn-analyze" onclick="runAnalysis('${patent.id}')">
@@ -275,21 +278,24 @@ function renderDetail(patent) {
          分析中...
        </button>`;
 
+  const jplatpatUrl = (patent.metadata || {}).jplatpat_url;
+
   el.innerHTML = `
     <div class="detail-header">
       <div class="detail-title">
         <h1>${escHtml(patent.title || '（タイトルなし）')}</h1>
-        <div class="number" style="margin-top:6px;display:flex;gap:8px;align-items:center">
+        <div class="number" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           ${escHtml(patent.patent_number || '番号未設定')}
-          ${sourceBadge(patent.source)}
+          ${sourceBadge(patent.source, jplatpatUrl)}
           <span style="font-size:12px;color:var(--c-text-muted)">${fmtDate(patent.created_at)}</span>
         </div>
       </div>
       <div class="detail-actions">
         <div class="view-mode-toggle">
-          <button class="mode-btn ${state.viewMode === 'analysis' ? 'active' : ''}" data-mode="analysis" onclick="switchViewMode('analysis')">AI分析のみ</button>
-          <button class="mode-btn ${state.viewMode === 'source' ? 'active' : ''}" data-mode="source" onclick="switchViewMode('source')">原文のみ</button>
-          <button class="mode-btn ${state.viewMode === 'compare' ? 'active' : ''}" data-mode="compare" onclick="switchViewMode('compare')">並べて比較</button>
+          <button class="mode-btn ${state.viewMode === 'family' ? 'active' : ''}" data-mode="family" onclick="switchViewMode('family')">書誌情報</button>
+          <button class="mode-btn ${state.viewMode === 'analysis' ? 'active' : ''}" data-mode="analysis" onclick="switchViewMode('analysis')">AI分析</button>
+          <button class="mode-btn ${state.viewMode === 'source' ? 'active' : ''}" data-mode="source" onclick="switchViewMode('source')">原文</button>
+          <button class="mode-btn ${state.viewMode === 'compare' ? 'active' : ''}" data-mode="compare" onclick="switchViewMode('compare')">AI分析・原文</button>
         </div>
         ${analysisBtn}
       </div>
@@ -297,20 +303,6 @@ function renderDetail(patent) {
 
     <div class="detail-content" data-view-mode="${state.viewMode}">
       <div class="compare-left">
-        <!-- 書誌情報 -->
-        <div class="card">
-          <div class="card-header"><h3>書誌情報${(patent.metadata || {}).publication_type ? '：' + escHtml((patent.metadata || {}).publication_type) : ''}</h3></div>
-          <div class="card-body">
-            ${renderBiblio(patent)}
-            ${patent.abstract ? `
-              <hr class="divider" style="margin:14px 0">
-              <div>
-                <label style="font-size:11px;color:var(--c-text-muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">要約</label>
-                <div class="abstract-text">${escHtml(patent.abstract)}</div>
-              </div>` : ""}
-          </div>
-        </div>
-
         <!-- AI 分析 -->
         <div id="analysis-section">
           ${renderAnalysisSection(patent)}
@@ -330,6 +322,23 @@ function renderDetail(patent) {
 
       <div class="compare-right">
         ${renderSourcePanel(patent)}
+      </div>
+      <div class="family-panel-wrapper">
+        <!-- 書誌情報 -->
+        <div class="card">
+          <div class="card-header"><h3>書誌情報${(patent.metadata || {}).publication_type ? '：' + escHtml((patent.metadata || {}).publication_type) : ''}</h3></div>
+          <div class="card-body">
+            ${renderBiblio(patent)}
+            ${patent.abstract ? `
+              <hr class="divider" style="margin:14px 0">
+              <div>
+                <label style="font-size:11px;color:var(--c-text-muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px">要約</label>
+                <div class="abstract-text">${escHtml(patent.abstract)}</div>
+              </div>` : ""}
+          </div>
+        </div>
+        <!-- ファミリー情報 -->
+        ${renderFamilyPanel(patent)}
       </div>
     </div>
   `;
@@ -409,9 +418,9 @@ function switchViewMode(mode) {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
   const detail = document.getElementById("detail");
-  if (detail) detail.classList.toggle("detail-compare-mode", mode === "compare");
+  if (detail) detail.classList.toggle("detail-compare-mode", mode === "compare" || mode === "family");
 
-  // 比較モード時にサイドバーを自動折りたたみ、他モードで自動復元
+  // 比較モード時のみサイドバーを自動折りたたみ、他モードで自動復元
   if (mode === "compare") {
     const sidebar = document.getElementById("sidebar");
     if (sidebar && !sidebar.classList.contains("collapsed")) {
@@ -534,6 +543,121 @@ function renderClaimCard(c) {
     </div>`;
 }
 
+function renderFamilyPanel(patent) {
+  const fi = (patent.metadata || {}).family_info;
+
+  if (!fi || fi.source === "unknown") {
+    return `
+      <div class="family-unknown">
+        <div style="font-size:48px;margin-bottom:16px">🌐</div>
+        <h3>ファミリー情報を取得できません</h3>
+        <p>Word / PDF インポートでは J-PlatPat への照会を行いません。<br>
+        J-PlatPat から登録するとファミリー情報が取得されます。</p>
+      </div>`;
+  }
+
+  if (!fi || !fi.families || fi.families.length === 0) {
+    return `
+      <div class="card">
+        <div class="card-header"><h3>🌐 ファミリー情報</h3></div>
+        <div class="card-body">
+          <div class="source-empty">ファミリー情報が見つかりませんでした。</div>
+        </div>
+      </div>`;
+  }
+
+  const familyRows = fi.families.map(f => `
+    <tr>
+      <td>${escHtml(f.country || '-')}</td>
+      <td class="family-num-cell">${escHtml(f.application_number || '-')}</td>
+      <td>${escHtml(f.filing_date || '-')}</td>
+      <td class="family-num-cell">${escHtml(f.publication_number || '-')}</td>
+      <td class="family-num-cell">${escHtml(f.registration_number || '-')}</td>
+    </tr>`).join('');
+
+  const docSections = fi.document_sections || [];
+  const docSectionsHtml = docSections.map(sec => {
+    const headerHtml = (sec.headers || []).map(h => `<th>${escHtml(h)}</th>`).join('');
+    const headers = sec.headers || [];
+    const rowsHtml = (sec.rows || []).map(row =>
+      `<tr>${row.map((cell, i) => {
+        const cls = (headers[i] || '').includes('提出日') ? ' class="family-doc-date"' : '';
+        return `<td${cls}>${escHtml(cell)}</td>`;
+      }).join('')}</tr>`
+    ).join('');
+    return `
+      <div class="family-doc-section">
+        <div class="family-doc-label" onclick="toggleFamilyDocSection(this)">
+          <span>${escHtml(sec.label || '')}</span>
+          <button class="btn btn-secondary btn-sm family-doc-toggle" onclick="event.stopPropagation();toggleFamilyDocSection(this.closest('.family-doc-label'))">開く ▼</button>
+        </div>
+        <div class="family-doc-body" style="display:none">
+          <table class="family-doc-table">
+            <thead><tr>${headerHtml}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>🌐 ファミリー一覧</h3>
+        <span class="family-count-badge">${fi.families.length}件</span>
+      </div>
+      <div class="card-body" style="padding:0;overflow-x:auto">
+        <table class="family-table">
+          <thead>
+            <tr>
+              <th>国・地域</th>
+              <th>出願番号</th>
+              <th>出願日</th>
+              <th>公開番号</th>
+              <th>登録番号</th>
+            </tr>
+          </thead>
+          <tbody>${familyRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    ${docSections.length ? `
+    <div class="card">
+      <div class="card-header">
+        <h3>書類情報</h3>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllFamilyDocSections(this, true)">全て開く</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllFamilyDocSections(this, false)">全て閉じる</button>
+        </div>
+      </div>
+      <div style="padding:0 0 8px">
+        ${docSectionsHtml}
+      </div>
+    </div>` : ''}`;
+}
+
+function toggleFamilyDocSection(labelEl) {
+  const section = labelEl.closest('.family-doc-section');
+  const body = section ? section.querySelector('.family-doc-body') : null;
+  const btn = section ? section.querySelector('.family-doc-toggle') : null;
+  if (!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '閉じる ▲' : '開く ▼';
+}
+
+function toggleAllFamilyDocSections(btn, expand) {
+  const card = btn.closest('.card');
+  if (!card) return;
+  card.querySelectorAll('.family-doc-body').forEach(b => {
+    b.style.display = expand ? 'block' : 'none';
+  });
+  card.querySelectorAll('.family-doc-toggle').forEach(t => {
+    t.textContent = expand ? '閉じる ▲' : '開く ▼';
+  });
+}
+
 function biblioRow(label, value) {
   if (!value) return "";
   return `<div class="biblio-item">
@@ -548,10 +672,7 @@ function renderBiblio(patent) {
   const applicantLabel = (isRegistered && m.patentee) ? "特許権者" : "出願人";
   const applicantValue = (isRegistered && m.patentee) ? m.patentee : (patent.applicant || m.applicant || "");
 
-  // J-PlatPat リンク
-  const urlHtml = m.jplatpat_url
-    ? `<div class="biblio-entry"><span class="biblio-key">【J-PlatPat】</span><span class="biblio-val"><a href="${escHtml(m.jplatpat_url)}" target="_blank" rel="noopener noreferrer">${escHtml(m.jplatpat_url)}</a></span></div>`
-    : "";
+  const urlHtml = "";
 
   // 特許権者
   const applicantHtml = `<div class="biblio-entry"><span class="biblio-key">【${applicantLabel}】</span><span class="biblio-val">${applicantValue ? escHtml(applicantValue) : "-"}</span></div>`;
