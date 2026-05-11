@@ -543,7 +543,6 @@ function renderAnalysisSection(patent) {
         </div>
         <div class="progress-time-row">
           <span>経過時間：<strong id="analysis-elapsed-time">0:00</strong></span>
-          <span id="analysis-remaining-time" class="progress-remaining">推定残り 3:00</span>
         </div>
         <p class="progress-note">分析はサーバー側で実行中です。他の特許を確認してから戻っても、経過時間・分析結果はそのまま表示されます。</p>
       </div>
@@ -939,6 +938,7 @@ function startPolling(patentId) {
         const analysisEl = document.getElementById("analysis-section");
         if (analysisEl) {
           analysisEl.innerHTML = renderAnalysisSection(patent);
+          updateProgressUI(); // 再描画直後にタイマーを即時反映（0:00フラッシュ防止）
         }
       }
     } catch (e) {
@@ -960,21 +960,13 @@ function stopPolling(clearState = false) {
 function updateProgressUI() {
   if (!state.analysisStartTime) return;
   const elapsed = Math.floor((Date.now() - state.analysisStartTime) / 1000);
-  const estimatedTotal = 180;
-  const pct = Math.min(Math.floor((elapsed / estimatedTotal) * 95), 95);
+  const pct = Math.min(Math.floor((elapsed / 180) * 95), 95);
 
   const elapsedEl = document.getElementById("analysis-elapsed-time");
   const barEl = document.getElementById("analysis-progress-bar");
-  const remainingEl = document.getElementById("analysis-remaining-time");
 
   if (elapsedEl) elapsedEl.textContent = formatTime(elapsed);
   if (barEl) barEl.style.width = pct + "%";
-  if (remainingEl) {
-    const remaining = Math.max(0, estimatedTotal - elapsed);
-    remainingEl.textContent = elapsed < estimatedTotal
-      ? `推定残り ${formatTime(remaining)}`
-      : "もうすぐ完了します...";
-  }
 }
 
 function formatTime(seconds) {

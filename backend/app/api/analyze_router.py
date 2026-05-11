@@ -52,6 +52,10 @@ async def analyze_patent(
     )
 
     patent.analysis_status = "analyzing"
+    patent.summary = None
+    patent.key_points = None
+    patent.claims_structured = None
+    patent.mermaid_diagram = None
     db.commit()
 
     background_tasks.add_task(_run_analysis_task, patent_id, full_text)
