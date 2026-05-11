@@ -69,40 +69,43 @@ def compose_patent_text(
     return "\n\n".join(parts)
 
 
-async def analyze_patent(
-    text: str,
-    images: list[bytes] | None = None,
-) -> dict:
-    """特許テキスト（＋図面）から要約・請求項構造・図解を生成して返す。
-
-    Args:
-        text: 特許文書テキスト（compose_patent_text() で生成推奨）
-        images: 図面画像バイト列のリスト（任意、PNG）
-
-    Returns:
-        {
-          "summary": str,          # 発明の概要 3〜5文
-          "key_points": list[str], # 権利化ポイント
-          "claims_structured": list[dict],  # 構造化請求項
-          "mermaid_diagram": str,  # Mermaid 図コード
-          "drawio_xml": str,       # Draw.io XML
-        }
-    """
+async def analyze_summary(text: str) -> dict:
+    """Step 1: 発明の概要（summary）を生成する。"""
     provider = _get_provider()
-    prompt = _load_prompt("analyze_patent")
-
+    prompt = _load_prompt("analyze_summary")
     output = await provider.complete(
         prompt=prompt,
-        input=AnalysisInput(text=text, images=images),
+        input=AnalysisInput(text=text),
     )
-
     result = _parse_analysis_response(output.content)
-    result["_meta"] = {
-        "model": output.model,
-        "input_tokens": output.input_tokens,
-        "output_tokens": output.output_tokens,
+    return {"summary": result.get("summary", "")}
+
+
+async def analyze_key_points(text: str) -> dict:
+    """Step 2: 権利化ポイント（key_points）を生成する。"""
+    provider = _get_provider()
+    prompt = _load_prompt("analyze_key_points")
+    output = await provider.complete(
+        prompt=prompt,
+        input=AnalysisInput(text=text),
+    )
+    result = _parse_analysis_response(output.content)
+    return {"key_points": result.get("key_points", [])}
+
+
+async def analyze_claims(text: str) -> dict:
+    """Step 3: 請求項構造と Mermaid 図を生成する。"""
+    provider = _get_provider()
+    prompt = _load_prompt("analyze_claims")
+    output = await provider.complete(
+        prompt=prompt,
+        input=AnalysisInput(text=text),
+    )
+    result = _parse_analysis_response(output.content)
+    return {
+        "claims_structured": result.get("claims_structured", []),
+        "mermaid_diagram": result.get("mermaid_diagram", ""),
     }
-    return result
 
 
 async def summarize_patent(text: str) -> str:
