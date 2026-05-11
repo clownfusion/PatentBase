@@ -472,8 +472,10 @@ function renderAnalysisSection(patent) {
   }
 
   if (status === "analyzing") {
-    const hasSummary  = !!patent.summary;
-    const hasKeyPoints = !!patent.key_points;
+    const hasSummary  = !!(patent.summary && patent.summary.length > 0);
+    const hasKeyPoints = Array.isArray(patent.key_points)
+      ? patent.key_points.length > 0
+      : !!(patent.key_points && patent.key_points.length > 0);
     const hasClaims   = !!(patent.claims_structured && patent.claims_structured.length);
 
     // 現在実行中のステップを判定
@@ -553,8 +555,10 @@ function renderAnalysisSection(patent) {
   }
 
   if (status === "error") {
-    const hasSummary   = !!patent.summary;
-    const hasKeyPoints = !!patent.key_points;
+    const hasSummary   = !!(patent.summary && patent.summary.length > 0);
+    const hasKeyPoints = Array.isArray(patent.key_points)
+      ? patent.key_points.length > 0
+      : !!(patent.key_points && patent.key_points.length > 0);
     const hasClaims    = !!(patent.claims_structured && patent.claims_structured.length);
     const hasAny = hasSummary || hasKeyPoints || hasClaims;
 
