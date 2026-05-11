@@ -399,8 +399,21 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
   gap: 8px;
   border-bottom: 1px solid var(--c-border);
 }
-.claim-header .claim-num { font-weight: 700; font-size: 13px; }
+.claim-header .claim-num { font-weight: 700; font-size: 13px; white-space: nowrap; }
 .claim-header .claim-summary { color: var(--c-text-muted); font-size: 13px; }
+.claim-type-tag {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 10px;
+  padding: 3px 8px;
+  line-height: 1.5;
+  text-align: center;
+}
+.claim-type-ind { background: #f0f9ff; color: #0369a1; }
+.claim-type-dep { background: var(--c-bg); color: var(--c-text-muted); border: 1px solid var(--c-border); }
+.claim-dep-ref { display: block; font-size: 11px; }
 .claim-body { padding: 10px 14px; }
 .claim-text { font-size: 13px; line-height: 1.6; color: var(--c-text-muted); margin-bottom: 8px; }
 .claim-components { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -511,6 +524,21 @@ html, body { height: 100%; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', s
   white-space: nowrap;
 }
 .kp-label-content { font-size: 13px; line-height: 1.6; color: var(--c-text); }
+.kp-content-item {
+  padding: 2px 0 2px 16px;
+  position: relative;
+  line-height: 1.6;
+}
+.kp-content-item::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+  background: var(--c-primary);
+  border-radius: 50%;
+}
 
 /* Mermaid */
 #mermaid-container {
@@ -747,27 +775,34 @@ hr.divider { border: none; border-top: 1px solid var(--c-border); margin: 8px 0;
 /* Mode: analysis (default) — right panel hidden */
 .detail-content[data-view-mode="analysis"] .compare-right { display: none; }
 
-/* Mode: source — left panel hidden, right takes full width with own scroll */
+/* Mode: source — left panel hidden, right scrolls in source-pane-container */
 .detail-content[data-view-mode="source"] .compare-left { display: none; }
 .detail-content[data-view-mode="source"] .compare-right {
-  overflow-y: auto;
-  max-height: calc(100vh - var(--header-h) - 120px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* height set by JS (applyPanelLayout) */
 }
 
-/* Mode: compare — side-by-side with sticky right panel */
+/* Mode: compare — dual-pane, each panel scrolls independently */
 .detail-content[data-view-mode="compare"] {
   display: flex;
   gap: 16px;
   align-items: flex-start;
 }
-.detail-content[data-view-mode="compare"] .compare-left { flex: 1; min-width: 0; }
+.detail-content[data-view-mode="compare"] .compare-left {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  /* height set by JS (applyPanelLayout) */
+}
 .detail-content[data-view-mode="compare"] .compare-right {
   flex: 1;
   min-width: 0;
-  position: sticky;
-  top: 24px;
-  max-height: calc(100vh - var(--header-h) - 48px);
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* height set by JS (applyPanelLayout) */
 }
 
 /* ===== Family panel wrapper ===== */
@@ -869,16 +904,23 @@ hr.divider { border: none; border-top: 1px solid var(--c-border); margin: 8px 0;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-lg);
-  /* overflow: hidden は position: sticky を無効化するため使用しない */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.source-pane-container {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 .source-tabs {
   display: flex;
   border-bottom: 1px solid var(--c-border);
   background: #fafbfc;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  flex-shrink: 0;
   box-shadow: 0 1px 4px rgba(0,0,0,.05);
 }
 .source-tab-btn {

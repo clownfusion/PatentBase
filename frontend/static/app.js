@@ -350,6 +350,8 @@ function renderDetail(patent) {
   if (patent.analysis_status === "done" && patent.mermaid_diagram) {
     renderMermaid(patent.mermaid_diagram);
   }
+
+  setTimeout(applyPanelLayout, 0);
 }
 
 function renderSourcePanel(patent) {
@@ -361,22 +363,24 @@ function renderSourcePanel(patent) {
         <button class="source-tab-btn active" data-mode="claims" onclick="switchSourceTab(this)">請求の範囲</button>
         <button class="source-tab-btn" data-mode="desc" onclick="switchSourceTab(this)">詳細な説明</button>
       </div>
-      <div class="source-pane active" id="source-claims">
-        ${claimsText
-          ? `<div class="source-text">${escHtml(claimsText)}</div>`
-          : `<div class="source-empty">データがありません</div>`}
-      </div>
-      <div class="source-pane" id="source-desc">
-        ${descText
-          ? `<div class="source-text">${escHtml(descText)}</div>`
-          : `<div class="source-empty">データがありません</div>`}
+      <div class="source-pane-container">
+        <div class="source-pane active" id="source-claims">
+          ${claimsText
+            ? `<div class="source-text">${escHtml(claimsText)}</div>`
+            : `<div class="source-empty">データがありません</div>`}
+        </div>
+        <div class="source-pane" id="source-desc">
+          ${descText
+            ? `<div class="source-text">${escHtml(descText)}</div>`
+            : `<div class="source-empty">データがありません</div>`}
+        </div>
       </div>
     </div>`;
 }
 
 function switchSourceTab(btn) {
   const panel = btn.closest(".source-panel");
-  const scrollEl = panel.closest(".compare-right");
+  const scrollEl = panel.querySelector(".source-pane-container");
 
   // 現在のタブのスクロール位置を保存
   const currentBtn = panel.querySelector(".source-tab-btn.active");
@@ -393,6 +397,25 @@ function switchSourceTab(btn) {
 
   // 切り替え先タブのスクロール位置を復元
   if (scrollEl) scrollEl.scrollTop = sourceScroll[btn.dataset.mode] || 0;
+}
+
+function applyPanelLayout() {
+  const viewMode = state.viewMode;
+  const detailContent = document.querySelector('.detail-content');
+  const left = detailContent && detailContent.querySelector('.compare-left');
+  const right = detailContent && detailContent.querySelector('.compare-right');
+  if (!right) return;
+
+  if (viewMode === 'compare' || viewMode === 'source') {
+    const rect = detailContent.getBoundingClientRect();
+    const availH = Math.floor(window.innerHeight - rect.top - 24);
+    if (availH < 100) return;
+    if (viewMode === 'compare' && left) left.style.height = availH + 'px';
+    right.style.height = availH + 'px';
+  } else {
+    if (left) left.style.height = '';
+    right.style.height = '';
+  }
 }
 
 function _applySidebarCollapsed(collapsed) {
@@ -434,6 +457,7 @@ function switchViewMode(mode) {
     state.sidebarAutoCollapsed = false;
     _applySidebarCollapsed(false);
   }
+  setTimeout(applyPanelLayout, 0);
 }
 
 function renderAnalysisSection(patent) {
@@ -537,13 +561,15 @@ function renderAnalysisSection(patent) {
 
 function renderClaimCard(c) {
   const typeClass = c.claim_type === "independent" ? "independent" : "dependent";
-  const typeLabel = c.claim_type === "independent" ? "独立項" : `従属項（→請求項${c.depends_on}）`;
+  const typeLabel = c.claim_type === "independent"
+    ? "独立項"
+    : `従属項<span class="claim-dep-ref">（→請求項${c.depends_on}）</span>`;
   const components = c.components || [];
   return `
     <div class="claim-card ${typeClass}">
       <div class="claim-header">
-        <span class="claim-num">請求項 ${c.claim_number}</span>
-        <span class="badge ${c.claim_type === 'independent' ? 'badge-jplatpat' : 'badge-pending'}">${typeLabel}</span>
+        <span class="claim-num">請求項${c.claim_number}</span>
+        <span class="claim-type-tag ${c.claim_type === 'independent' ? 'claim-type-ind' : 'claim-type-dep'}">${typeLabel}</span>
         ${c.summary ? `<span class="claim-summary">— ${escHtml(c.summary)}</span>` : ""}
       </div>
       <div class="claim-body">
@@ -935,14 +961,27 @@ function renderKpSection(sec) {
 
   let bodyHtml;
   if (parsed.every(l => l.type === "labeled")) {
-    // 全行ラベル付き → テーブルで文頭揃え
-    const rows = parsed.map(l => `<tr>
-      <td class="kp-label-cell"><span class="kp-label-badge">${escHtml(l.label)}</span></td>
-      <td class="kp-content-cell">${escHtml(l.content)}</td>
-    </tr>`).join("");
+    // 全行ラベル付き → 同じラベルをまとめてテーブルで文頭揃え
+    const labelOrder = [];
+    const labelMap = new Map();
+    for (const l of parsed) {
+      if (!labelMap.has(l.label)) {
+        labelMap.set(l.label, []);
+        labelOrder.push(l.label);
+      }
+      labelMap.get(l.label).push(l.content);
+    }
+    const rows = labelOrder.map(label => {
+      const items = labelMap.get(label);
+      const contentHtml = items.map(item => `<div class="kp-content-item">${escHtml(item)}</div>`).join("");
+      return `<tr>
+        <td class="kp-label-cell"><span class="kp-label-badge">${escHtml(label)}</span></td>
+        <td class="kp-content-cell">${contentHtml}</td>
+      </tr>`;
+    }).join("");
     bodyHtml = `<table class="kp-labeled-table">${rows}</table>`;
   } else {
-    // 混在 → リスト
+    // 混在 → リスト（連続する同ラベルをグループ化）
     const items = parsed.map(l =>
       l.type === "labeled"
         ? `<li class="kp-labeled-item"><span class="kp-label-badge">${escHtml(l.label)}</span><span class="kp-label-content">${escHtml(l.content)}</span></li>`
@@ -1153,6 +1192,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // File uploads
   setupFileUpload("word-file-input", "word-filename");
+
+  // Re-apply panel height on window resize
+  window.addEventListener('resize', applyPanelLayout);
 
   // Load initial data
   loadPatents();
