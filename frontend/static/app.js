@@ -472,6 +472,57 @@ function renderAnalysisSection(patent) {
   }
 
   if (status === "analyzing") {
+    const hasSummary  = !!patent.summary;
+    const hasKeyPoints = !!patent.key_points;
+    const hasClaims   = !!(patent.claims_structured && patent.claims_structured.length);
+
+    // 現在実行中のステップを判定
+    const step = !hasSummary ? 1 : !hasKeyPoints ? 2 : 3;
+
+    const stepTag = (label, n) => {
+      if (n < step)  return `<span class="progress-step done">✓ ${label}</span>`;
+      if (n === step) return `<span class="progress-step active">⟳ ${label}</span>`;
+      return `<span class="progress-step pending">${label}</span>`;
+    };
+
+    const skeletonLines = `<div class="skeleton-lines">
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line" style="width:85%"></div>
+      <div class="skeleton-line" style="width:92%"></div>
+    </div>`;
+
+    const summaryCard = hasSummary
+      ? `<div class="card">
+           <div class="card-header"><h3>📝 発明の概要</h3></div>
+           <div class="card-body summary-card-body">${renderSummaryText(patent.summary)}</div>
+         </div>`
+      : `<div class="card skeleton-card">
+           <div class="card-header"><h3>📝 発明の概要</h3></div>
+           <div class="card-body">${skeletonLines}</div>
+         </div>`;
+
+    const kpCard = hasKeyPoints
+      ? `<div class="card">
+           <div class="card-header"><h3>🎯 権利化ポイント</h3></div>
+           <div class="card-body kp-card-body">${renderKeyPoints(patent.key_points)}</div>
+         </div>`
+      : `<div class="card skeleton-card">
+           <div class="card-header"><h3>🎯 権利化ポイント</h3></div>
+           <div class="card-body">${skeletonLines}</div>
+         </div>`;
+
+    const claimsCard = hasClaims
+      ? `<div class="card">
+           <div class="card-header"><h3>📋 請求項の構造</h3></div>
+           <div class="card-body">
+             <div class="claims-list">${patent.claims_structured.map(c => renderClaimCard(c)).join("")}</div>
+           </div>
+         </div>`
+      : `<div class="card skeleton-card">
+           <div class="card-header"><h3>📋 請求項の構造</h3></div>
+           <div class="card-body">${skeletonLines}</div>
+         </div>`;
+
     return `<div class="analysis-analyzing">
       <div class="progress-card">
         <div class="progress-header">
@@ -481,28 +532,56 @@ function renderAnalysisSection(patent) {
         <div class="progress-steps">
           <span class="progress-step done">✓ テキスト送信</span>
           <span class="progress-step-arrow">→</span>
-          <span class="progress-step active">⟳ Claude 解析中</span>
+          ${stepTag("発明の概要", 1)}
           <span class="progress-step-arrow">→</span>
-          <span class="progress-step pending">構造化・保存</span>
+          ${stepTag("権利化ポイント", 2)}
+          <span class="progress-step-arrow">→</span>
+          ${stepTag("請求項構造・保存", 3)}
         </div>
         <div class="progress-bar-wrapper">
           <div id="analysis-progress-bar" class="progress-bar-fill" style="width:0%"></div>
         </div>
         <div class="progress-time-row">
           <span>経過時間：<strong id="analysis-elapsed-time">0:00</strong></span>
-          <span id="analysis-remaining-time" class="progress-remaining">推定残り 2:00</span>
+          <span id="analysis-remaining-time" class="progress-remaining">推定残り 3:00</span>
         </div>
         <p class="progress-note">分析はサーバー側で実行中です。他の特許を確認してから戻っても、経過時間・分析結果はそのまま表示されます。</p>
       </div>
+      ${summaryCard}
+      ${kpCard}
+      ${claimsCard}
     </div>`;
   }
 
   if (status === "error") {
-    return `<div class="analysis-error">
-      <div style="font-size:36px;margin-bottom:8px">⚠️</div>
-      <h3>分析エラー</h3>
-      <p>分析中にエラーが発生しました。API キーの設定を確認して再試行してください。</p>
-    </div>`;
+    const hasSummary   = !!patent.summary;
+    const hasKeyPoints = !!patent.key_points;
+    const hasClaims    = !!(patent.claims_structured && patent.claims_structured.length);
+    const hasAny = hasSummary || hasKeyPoints || hasClaims;
+
+    const errorNotice = hasAny
+      ? `<div class="analysis-error-partial">⚠️ 分析中にエラーが発生しました。取得済みの結果のみ表示しています。</div>`
+      : `<div class="analysis-error">
+           <div style="font-size:36px;margin-bottom:8px">⚠️</div>
+           <h3>分析エラー</h3>
+           <p>分析中にエラーが発生しました。API キーの設定を確認して再試行してください。</p>
+         </div>`;
+
+    return `${errorNotice}
+      ${hasSummary ? `<div class="card">
+        <div class="card-header"><h3>📝 発明の概要</h3></div>
+        <div class="card-body summary-card-body">${renderSummaryText(patent.summary)}</div>
+      </div>` : ""}
+      ${hasKeyPoints ? `<div class="card">
+        <div class="card-header"><h3>🎯 権利化ポイント</h3></div>
+        <div class="card-body kp-card-body">${renderKeyPoints(patent.key_points)}</div>
+      </div>` : ""}
+      ${hasClaims ? `<div class="card">
+        <div class="card-header"><h3>📋 請求項の構造</h3></div>
+        <div class="card-body">
+          <div class="claims-list">${patent.claims_structured.map(c => renderClaimCard(c)).join("")}</div>
+        </div>
+      </div>` : ""}`;
   }
 
   if (status === "done") {
@@ -875,7 +954,7 @@ function stopPolling(clearState = false) {
 function updateProgressUI() {
   if (!state.analysisStartTime) return;
   const elapsed = Math.floor((Date.now() - state.analysisStartTime) / 1000);
-  const estimatedTotal = 120;
+  const estimatedTotal = 180;
   const pct = Math.min(Math.floor((elapsed / estimatedTotal) * 95), 95);
 
   const elapsedEl = document.getElementById("analysis-elapsed-time");
