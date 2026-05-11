@@ -59,22 +59,33 @@ async def analyze_patent(
 
 
 async def _run_analysis_task(patent_id: str, full_text: str) -> None:
-    """バックグラウンドで AI 分析を実行し DB に保存する。"""
+    """バックグラウンドで AI 分析を 3 ステップ順次実行し、各完了後に DB へ保存する。"""
     db = SessionLocal()
     try:
-        result = await ai_analyzer.analyze_patent(text=full_text)
-
+        # Step 1: 発明の概要
+        result = await ai_analyzer.analyze_summary(full_text)
         patent = db.query(Patent).filter(Patent.id == patent_id).first()
-        if patent:
-            patent.summary = result.get("summary", "")
-            patent.key_points = json.dumps(
-                result.get("key_points", []), ensure_ascii=False
-            )
-            patent.claims_structured = result.get("claims_structured")
-            patent.mermaid_diagram = result.get("mermaid_diagram", "")
-            patent.drawio_xml = result.get("drawio_xml", "")
-            patent.analysis_status = "done"
-            db.commit()
+        if not patent:
+            return
+        patent.summary = result.get("summary", "")
+        db.commit()
+
+        # Step 2: 権利化ポイント
+        result = await ai_analyzer.analyze_key_points(full_text)
+        patent = db.query(Patent).filter(Patent.id == patent_id).first()
+        patent.key_points = json.dumps(
+            result.get("key_points", []), ensure_ascii=False
+        )
+        db.commit()
+
+        # Step 3: 請求項構造 + Mermaid 図
+        result = await ai_analyzer.analyze_claims(full_text)
+        patent = db.query(Patent).filter(Patent.id == patent_id).first()
+        patent.claims_structured = result.get("claims_structured")
+        patent.mermaid_diagram = result.get("mermaid_diagram", "")
+        patent.analysis_status = "done"
+        db.commit()
+
     except Exception:
         try:
             patent = db.query(Patent).filter(Patent.id == patent_id).first()
