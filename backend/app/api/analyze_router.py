@@ -73,6 +73,8 @@ async def _run_analysis_task(patent_id: str, full_text: str) -> None:
         # Step 2: 権利化ポイント
         result = await ai_analyzer.analyze_key_points(full_text)
         patent = db.query(Patent).filter(Patent.id == patent_id).first()
+        if not patent:
+            return
         patent.key_points = json.dumps(
             result.get("key_points", []), ensure_ascii=False
         )
@@ -81,6 +83,8 @@ async def _run_analysis_task(patent_id: str, full_text: str) -> None:
         # Step 3: 請求項構造 + Mermaid 図
         result = await ai_analyzer.analyze_claims(full_text)
         patent = db.query(Patent).filter(Patent.id == patent_id).first()
+        if not patent:
+            return
         patent.claims_structured = result.get("claims_structured")
         patent.mermaid_diagram = result.get("mermaid_diagram", "")
         patent.analysis_status = "done"
