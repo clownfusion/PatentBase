@@ -77,6 +77,11 @@ PatentBase/
 │       │   ├── patents_router.py
 │       │   ├── analyze_router.py
 │       │   └── reports_router.py
+│       ├── prompts/
+│       │   ├── analyze_summary.txt      # 発明の概要プロンプト
+│       │   ├── analyze_key_points.txt   # 権利化ポイントプロンプト
+│       │   ├── analyze_claims.txt       # 請求項構造+Mermaidプロンプト
+│       │   └── summarize_patent.txt     # （旧）一括分析プロンプト
 │       └── services/
 │           ├── jplatpat_scraper.py
 │           ├── pdf_importer.py
@@ -123,15 +128,29 @@ response = await client.messages.create(
 
 ### AI 分析の非同期パターン（`analyze_router.py`）
 
-AI 分析は最大数分かかるため、HTTP リクエストをブロックしないよう FastAPI の `BackgroundTasks` を使う。
+AI 分析は最大数分かかるため、HTTP リクエストをブロックしないよう FastAPI の `BackgroundTasks` を使う。  
+分析は **3 ステップ順次実行**し、各ステップ完了後に DB へコミットすることで、フロントエンドが結果を逐次表示できる。
 
 **フロー:**
-1. `POST /analyze/{id}` → DB の `analysis_status` を `"analyzing"` にして即座に返す
-2. バックグラウンドで `_run_analysis_task()` が非同期に実行
+1. `POST /analyze/{id}` → 既存フィールド（`summary`/`key_points`/`claims_structured`/`mermaid_diagram`）を `None` にクリアして `analysis_status = "analyzing"` をコミット、即座に返す
+2. バックグラウンドで `_run_analysis_task()` が 3 ステップを順次実行:
+   - Step 1: `analyze_summary()` → `patent.summary` を更新・コミット
+   - Step 2: `analyze_key_points()` → `patent.key_points` を更新・コミット
+   - Step 3: `analyze_claims()` → `patent.claims_structured`・`patent.mermaid_diagram`・`analysis_status = "done"` をコミット
 3. フロントエンドは `GET /patents/{id}` を 2 秒ごとにポーリング
-4. `analysis_status` が `"done"` または `"error"` になったらポーリング停止
+4. ポーリングごとに `#analysis-section` を部分更新し、完了したステップの結果を即座に表示
+5. `analysis_status` が `"done"` または `"error"` になったらポーリング停止
 
 **注意:** background task のテキスト構築は HTTP ハンドラ内で行う。`BackgroundTasks` 関数内では元の `db` セッションが無効になっているため、テキストを事前に渡す必要がある。
+
+**プロンプトファイル（`backend/app/prompts/`）:**
+各ステップのシステムプロンプトはファイルで管理する。`ai_analyzer.py` の `_load_prompt(name)` が `prompts/{name}.txt` を読み込む。
+
+| ファイル | 対応関数 | 返す JSON キー |
+|---|---|---|
+| `analyze_summary.txt` | `analyze_summary()` | `summary` |
+| `analyze_key_points.txt` | `analyze_key_points()` | `key_points` |
+| `analyze_claims.txt` | `analyze_claims()` | `claims_structured`, `mermaid_diagram` |
 
 ### Claude Code CLI プロバイダー（`claude_code_provider.py`）
 
@@ -275,6 +294,19 @@ DB のデータ形式が2種類混在する:
 
 フロントエンドの `renderKeyPoints()` は `Array.isArray()` で両形式を判定して処理する。
 
+**フロントエンドでの `key_points` 存在チェック（`!![]` 問題）:**  
+`_parse_key_points(None)` が Python で `[]` を返すため、API レスポンスも `[]`（空配列）になる。  
+JavaScript では `!![] === true` なので `!!patent.key_points` は常に `true` になる。  
+**必ず `length` で判定すること:**
+
+```javascript
+// NG: !!patent.key_points  →  [] でも true になる
+// OK:
+const hasKeyPoints = Array.isArray(patent.key_points)
+  ? patent.key_points.length > 0
+  : !!(patent.key_points && patent.key_points.length > 0);
+```
+
 ### 静的パスは動的パスより前に定義する
 
 `/{patent_id}` のような動的パスは同名の静的パスをすべて吸収してしまう。  
@@ -344,8 +376,8 @@ J-PlatPat リンクは `sourceBadge(source, url)` で詳細画面ヘッダーに
 ### 静的ファイルのキャッシュバスター
 
 ```html
-<link rel="stylesheet" href="/static/style.css?v=16">
-<script src="/static/app.js?v=28"></script>
+<link rel="stylesheet" href="/static/style.css?v=17">
+<script src="/static/app.js?v=31"></script>
 ```
 
 **JS または CSS を変更したら、対応するバージョン番号をインクリメントすること。**

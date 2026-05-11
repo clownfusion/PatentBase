@@ -143,6 +143,83 @@ function applyPanelLayout() {
 
 ---
 
+## AI 分析プログレッシブ表示（`renderAnalysisSection`）
+
+### analyzing 状態の部分表示
+
+`analysis_status === "analyzing"` の間、完了したステップの結果と未完了のスケルトンカードを並べて表示する。
+
+**ステップ判定:**
+
+```javascript
+const hasSummary  = !!(patent.summary && patent.summary.length > 0);
+const hasKeyPoints = Array.isArray(patent.key_points)
+  ? patent.key_points.length > 0
+  : !!(patent.key_points && patent.key_points.length > 0);
+const hasClaims   = !!(patent.claims_structured && patent.claims_structured.length);
+
+// 現在実行中のステップ番号（1=概要, 2=権利化ポイント, 3=請求項）
+const step = !hasSummary ? 1 : !hasKeyPoints ? 2 : 3;
+```
+
+**注意:** `_parse_key_points(None)` は `[]` を返すため API レスポンスが空配列になる。`!![]` は `true` なので、`!!patent.key_points` では未取得を検知できない。必ず `length` チェックを使う（上記コード参照）。
+
+**ステップインジケーター（`stepTag`）:**
+
+```javascript
+const stepTag = (label, n) => {
+  if (n < step)   return `<span class="progress-step done">✓ ${label}</span>`;
+  if (n === step) return `<span class="progress-step active">⟳ ${label}</span>`;
+  return `<span class="progress-step pending">${label}</span>`;
+};
+```
+
+```css
+.progress-step        { display: inline-flex; align-items: center; padding: 2px 10px;
+                        border-radius: 20px; font-size: 12px; gap: 4px; }
+.progress-step.done   { background: #f0fdf4; color: #16a34a; }
+.progress-step.active { background: #eff6ff; color: #2563eb; }
+.progress-step.pending{ background: var(--c-bg-alt); color: var(--c-text-muted); }
+```
+
+**スケルトンカード（未完了ステップ用）:**
+
+```html
+<div class="card skeleton-card">
+  <div class="skeleton-lines">
+    <div class="skeleton-line"></div>
+    <div class="skeleton-line short"></div>
+    <div class="skeleton-line"></div>
+  </div>
+</div>
+```
+
+```css
+.skeleton-card { opacity: 0.6; }
+.skeleton-lines { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.skeleton-line  { height: 14px; background: linear-gradient(90deg,
+                  var(--c-border) 25%, #e2e4e9 50%, var(--c-border) 75%);
+                  background-size: 200% 100%; border-radius: 6px;
+                  animation: shimmer 1.4s infinite; }
+.skeleton-line.short { width: 60%; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+```
+
+### ポーリングの部分更新
+
+`analysis_status === "analyzing"` 中は `#detail` 全体を再レンダリングせず、`#analysis-section` のみ更新する。これにより他タブのスクロール位置が失われない。
+
+```javascript
+// startPolling の else branch（analyzing 中の更新）
+const analysisEl = document.getElementById('analysis-section');
+if (analysisEl) {
+  analysisEl.innerHTML = renderAnalysisSection(patent);
+  updateProgressUI();  // タイマー即時更新（ちらつき防止）
+}
+```
+
+---
+
 ## AI 分析結果の表示ロジック
 
 ### `renderSummaryText(text)` — 発明の概要
