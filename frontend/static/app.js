@@ -924,16 +924,22 @@ function startPolling(patentId) {
   updateProgressUI();
   state.progressTimer = setInterval(() => updateProgressUI(), 1000);
 
-  // 2秒ごとに完了チェック
+  // 2秒ごとに完了チェック（analyzing 中は analysis-section のみ部分更新）
   state.pollingTimer = setInterval(async () => {
     try {
       const patent = await api("GET", `/patents/${patentId}`);
       if (patent.analysis_status !== "analyzing") {
-        stopPolling(true);  // 完了 → タイマー状態をクリア
+        stopPolling(true);
         renderDetail(patent);
         if (patent.analysis_status === "done") toast("AI 分析が完了しました", "success");
         if (patent.analysis_status === "error") toast("分析中にエラーが発生しました", "error");
         await loadPatents();
+      } else {
+        // スクロール位置を保持したまま分析セクションのみ更新
+        const analysisEl = document.getElementById("analysis-section");
+        if (analysisEl) {
+          analysisEl.innerHTML = renderAnalysisSection(patent);
+        }
       }
     } catch (e) {
       stopPolling(true);
